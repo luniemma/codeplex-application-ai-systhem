@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: codeplex-ai
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: codeplex-ai
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: codeplex
+        namespace: codeplex-ai
+
+    scrape_configs:
+      # Self-scrape so we can graph Prometheus's own health.
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Scrape any pod in this namespace that has prometheus.io/scrape: "true"
+      # The codeplex-ai Deployment template sets these annotations, so it's
+      # picked up automatically — no per-job config needed.
+      - job_name: codeplex-ai-pods
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - codeplex-ai
+        relabel_configs:
+          # Only keep pods that opt-in.
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          # Use the path annotation if set (defaults to /metrics).
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # Use the port annotation, falling back to the pod's first port.
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          # Surface namespace, pod, and app labels in every series for easy filtering.
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            action: replace
+            target_label: app
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            action: replace
+            target_label: component

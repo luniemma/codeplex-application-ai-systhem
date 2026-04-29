@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: codeplex-ai
+  namespace: codeplex-ai
+  labels:
+    app.kubernetes.io/name: codeplex-ai
+    app.kubernetes.io/part-of: codeplex-ai
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codeplex-ai
+      app.kubernetes.io/component: api

@@ -1,0 +1,37 @@
+# Optional Ingress. Replace `codeplex.example.com` with your real host and
+# tweak the annotations for your ingress controller (nginx-ingress, traefik,
+# AWS ALB, GKE GCE, etc.).
+#
+# For TLS, either:
+#   - install cert-manager and set the cert-manager.io/cluster-issuer annotation
+#   - or pre-create a Secret named `codeplex-ai-tls` containing tls.crt + tls.key
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codeplex-ai
+  namespace: codeplex-ai
+  labels:
+    app.kubernetes.io/name: codeplex-ai
+    app.kubernetes.io/part-of: codeplex-ai
+  annotations:
+    # nginx-ingress example
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: codeplex.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: codeplex-ai
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - codeplex.example.com
+      secretName: codeplex-ai-tls

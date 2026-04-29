@@ -1,0 +1,45 @@
+# Provisioning config — Grafana auto-loads YAMLs under
+# /etc/grafana/provisioning/{datasources,dashboards} on startup.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: codeplex-ai
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: codeplex-ai
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus-codeplex
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 15s
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: codeplex-ai
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: codeplex-ai
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: codeplex-ai
+        orgId: 1
+        folder: Codeplex
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards

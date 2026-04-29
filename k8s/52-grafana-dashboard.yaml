@@ -1,0 +1,203 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: codeplex-ai
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: codeplex-ai
+    # The kube-prometheus-stack Grafana sidecar uses this label to discover
+    # dashboard ConfigMaps cluster-wide. Harmless if you're not using that
+    # stack — the bundled Grafana mounts this ConfigMap directly.
+    grafana_dashboard: "1"
+data:
+  codeplex-ai.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "title": "Codeplex AI",
+      "uid": "codeplex-ai",
+      "tags": ["codeplex-ai", "flask"],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "weekStart": "",
+      "templating": {"list": []},
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Up",
+          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "sum(up{job=\"codeplex-ai-pods\"})"}
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "green", "value": 1}
+                ]
+              }
+            }
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+          }
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Request rate (req/s)",
+          "gridPos": {"h": 4, "w": 5, "x": 4, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(flask_http_request_total{job=\"codeplex-ai-pods\"}[5m]))"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}},
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+          }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "5xx error rate (%)",
+          "gridPos": {"h": 4, "w": 5, "x": 9, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "100 * sum(rate(flask_http_request_total{job=\"codeplex-ai-pods\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(flask_http_request_total{job=\"codeplex-ai-pods\"}[5m])), 0.001)"}
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 1},
+                  {"color": "red", "value": 5}
+                ]
+              }
+            }
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+          }
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "p95 latency",
+          "gridPos": {"h": 4, "w": 5, "x": 14, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(flask_http_request_duration_seconds_bucket{job=\"codeplex-ai-pods\"}[5m])))"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}},
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+          }
+        },
+        {
+          "id": 5,
+          "type": "stat",
+          "title": "Build version",
+          "gridPos": {"h": 4, "w": 5, "x": 19, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "codeplex_ai_build_info{job=\"codeplex-ai-pods\"}", "legendFormat": "{{version}}", "instant": true}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}},
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "textMode": "name",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+          }
+        },
+        {
+          "id": 10,
+          "type": "timeseries",
+          "title": "Request rate by status",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "sum by (status) (rate(flask_http_request_total{job=\"codeplex-ai-pods\"}[5m]))", "legendFormat": "{{status}}"}
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 20, "stacking": {"mode": "normal"}}
+            }
+          },
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 11,
+          "type": "timeseries",
+          "title": "Latency percentiles",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(flask_http_request_duration_seconds_bucket{job=\"codeplex-ai-pods\"}[5m])))", "legendFormat": "p50"},
+            {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(flask_http_request_duration_seconds_bucket{job=\"codeplex-ai-pods\"}[5m])))", "legendFormat": "p95"},
+            {"refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(flask_http_request_duration_seconds_bucket{job=\"codeplex-ai-pods\"}[5m])))", "legendFormat": "p99"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s"}},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 12,
+          "type": "timeseries",
+          "title": "Top routes by request rate",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "topk(10, sum by (path) (rate(flask_http_request_total{job=\"codeplex-ai-pods\"}[5m])))", "legendFormat": "{{path}}"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps"}},
+          "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "id": 13,
+          "type": "timeseries",
+          "title": "Per-pod request rate & p95 latency",
+          "description": "Request rate and tail latency split by pod. Useful for spotting an unhealthy replica before the average masks it. (Process resident-memory and CPU are not aggregated by the gunicorn multiproc collector — pull those from cAdvisor / kube-state-metrics instead.)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "datasource": {"type": "prometheus", "uid": "prometheus-codeplex"},
+          "targets": [
+            {"refId": "A", "expr": "sum by (pod) (rate(flask_http_request_total{job=\"codeplex-ai-pods\"}[5m]))", "legendFormat": "rps {{pod}}"},
+            {"refId": "B", "expr": "histogram_quantile(0.95, sum by (pod, le) (rate(flask_http_request_duration_seconds_bucket{job=\"codeplex-ai-pods\"}[5m])))", "legendFormat": "p95 {{pod}}"}
+          ],
+          "fieldConfig": {
+            "defaults": {"unit": "reqps"},
+            "overrides": [
+              {
+                "matcher": {"id": "byRegexp", "options": "^p95.*"},
+                "properties": [{"id": "unit", "value": "s"}]
+              }
+            ]
+          },
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        }
+      ]
+    }

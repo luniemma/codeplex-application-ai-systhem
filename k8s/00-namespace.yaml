@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codeplex-ai
+  labels:
+    name: codeplex-ai
+    app.kubernetes.io/part-of: codeplex-ai
