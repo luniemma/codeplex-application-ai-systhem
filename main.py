@@ -111,6 +111,24 @@ def _install_request_logging(app: Flask) -> None:
     got_request_exception.connect(_on_unhandled, app)
 
 
+def _resolve_cors_origins() -> list[str]:
+    """CORS_ORIGINS defaults to '*' (open) only in development; in
+    production we require explicit origins so an unconfigured deploy
+    can't accidentally expose itself to every site on the web."""
+    raw = os.getenv("CORS_ORIGINS", "").strip()
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    if os.getenv("ENVIRONMENT", "production").lower() == "development":
+        return ["*"]
+    # Production with no explicit origins — same-origin only (empty list
+    # disables cross-origin sharing). Operators must opt in to wildcards.
+    logger.warning(
+        "CORS_ORIGINS is empty in production — refusing all cross-origin requests. "
+        "Set CORS_ORIGINS=https://your-frontend.example.com,... to allow specific origins."
+    )
+    return []
+
+
 def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__)
@@ -123,7 +141,7 @@ def create_app():
 
     CORS(app, resources={
         r"/api/*": {
-            "origins": os.getenv("CORS_ORIGINS", "*").split(","),
+            "origins": _resolve_cors_origins(),
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization", "X-Request-ID"],
             "expose_headers": ["X-Request-ID"],
@@ -132,11 +150,22 @@ def create_app():
 
     _install_request_logging(app)
 
+    # Production security hardening — headers + rate limits.
+    from app.security import install_security_headers, install_rate_limiter
+    install_security_headers(app)
+    limiter = install_rate_limiter(app, redis_url=os.getenv("REDIS_URL"))
+    app.extensions["limiter"] = limiter  # exposed for per-route limits in routes.py
+
     from app.routes import api_bp, health_bp
     from app.web import web_bp
     app.register_blueprint(api_bp)
     app.register_blueprint(health_bp)
     app.register_blueprint(web_bp)
+
+    # Per-blueprint rate limits — tighter than the global default for the
+    # AI endpoints since each call costs real money. Applied after the
+    # blueprint is registered, before the app starts handling requests.
+    limiter.limit("30 per minute")(api_bp)
 
     logger.info("Flask app created in %s mode", os.getenv("ENVIRONMENT", "production"))
 

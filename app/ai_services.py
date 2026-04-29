@@ -14,19 +14,29 @@ except ImportError:  # pragma: no cover
 
 from app.config import config
 from app.cache import cache_result
+from app.retry import with_retry
 
 logger = logging.getLogger(__name__)
 
 
 def _timed_call(provider: str, op: str, fn: Callable):
-    """Run `fn` and emit a single structured log line covering provider, op,
-    status, and duration. Tags flask.g with the provider so all downstream
-    logs in the same request can be filtered by provider."""
+    """Run `fn` (wrapped in retry-on-transient-error) and emit a single
+    structured log line covering provider, op, status, and duration. Tags
+    flask.g with the provider so all downstream logs in the same request
+    can be filtered by provider.
+
+    Permanent errors (auth, missing key, invalid model) propagate on the
+    first attempt; transient errors (timeouts, 5xx, 429) get up to 3
+    attempts with exponential backoff before failing.
+    """
     if has_request_context():
         g.ai_provider = provider
+
+    retried_fn = with_retry()(fn)
+
     started = time.perf_counter()
     try:
-        result = fn()
+        result = retried_fn()
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "provider_call provider=%s op=%s status=ok duration_ms=%d",

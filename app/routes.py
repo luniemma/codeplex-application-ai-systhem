@@ -2,12 +2,13 @@
 API Routes Module - REST endpoints for Codeplex AI
 """
 import logging
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from app.ai_services import (
     analyze_code, generate_code, chat as ai_chat,
     AIServiceFactory
 )
 from app.utils import validate_request, create_response
+from app.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +17,43 @@ api_bp = Blueprint('api', __name__, url_prefix='/api')
 health_bp = Blueprint('health', __name__)
 
 
+def _provider_has_real_key(name: str) -> bool:
+    key_attr = f"{name.upper()}_API_KEY"
+    value = getattr(config, key_attr, "")
+    return bool(value) and not value.startswith("your_")
+
+
+# ─── Health endpoints ──────────────────────────────────────────────────────
+# /livez — kubelet "liveness" probe. Process alive? Nothing else.
+# /readyz — kubelet "readiness" probe. Are we wired up enough to serve real
+#           traffic (i.e. at least one provider key configured)?
+# /health — legacy alias for /livez, kept so existing clients (the smoke
+#           test, Docker HEALTHCHECK) don't break.
+
+@health_bp.route('/livez', methods=['GET'])
 @health_bp.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
+def liveness():
+    """Process liveness — returns 200 as long as the WSGI app is responding.
+    Used by Kubernetes' livenessProbe; failure here triggers a pod restart."""
     return create_response({
         'status': 'healthy',
         'service': 'codeplex-ai',
-        'version': '1.0.0'
+        'version': '1.0.0',
     }, 200)
+
+
+@health_bp.route('/readyz', methods=['GET'])
+def readiness():
+    """Readiness probe — returns 503 unless we can plausibly serve a real
+    request. Used by Kubernetes' readinessProbe; failure here removes the
+    pod from the service load balancer without restarting it."""
+    providers = {p: _provider_has_real_key(p) for p in ("openai", "anthropic", "google")}
+    any_ready = any(providers.values())
+    body = {
+        'status': 'ready' if any_ready else 'not_ready',
+        'providers': providers,
+    }
+    return create_response(body, 200 if any_ready else 503)
 
 
 @api_bp.route('/models', methods=['GET'])
