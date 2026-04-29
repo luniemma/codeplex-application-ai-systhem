@@ -420,9 +420,18 @@ docker build -t codeplex-ai .
 docker run -p 8000:8000 --env-file .env codeplex-ai
 ```
 
-### Pull from GHCR
+### Pull from a registry
 
-Every push to `master` triggers [.github/workflows/docker.yml](.github/workflows/docker.yml), which builds the image, smoke-tests it (boots the container and verifies `/health` returns the healthy envelope), and publishes it to GitHub Container Registry. To use the published image:
+Every push to `master` triggers [.github/workflows/docker.yml](.github/workflows/docker.yml), which builds the image, smoke-tests it (boots the container and verifies `/health` returns the healthy envelope), and publishes it to **both** GitHub Container Registry **and** Docker Hub.
+
+**From Docker Hub:**
+
+```bash
+docker pull luniemma/codeplex-ai:latest
+docker run -p 8000:8000 --env-file .env luniemma/codeplex-ai:latest
+```
+
+**From GHCR:**
 
 ```bash
 docker pull ghcr.io/luniemma/codeplex-application-ai-systhem:latest
@@ -430,7 +439,20 @@ docker run -p 8000:8000 --env-file .env \
   ghcr.io/luniemma/codeplex-application-ai-systhem:latest
 ```
 
-> First-time visibility: GHCR packages are private by default. After the first publish, go to your GitHub profile → Packages → this package → Package settings → *Change visibility* if you want unauthenticated pulls.
+> First-time visibility: both registries default to **private**. To allow unauthenticated pulls:
+> - Docker Hub: hub.docker.com → repo → Settings → make Public
+> - GHCR: GitHub profile → Packages → this package → Package settings → Change visibility
+
+#### One-time setup for Docker Hub publishing
+
+Before the workflow can push to Docker Hub, add two repo secrets at GitHub → repo → **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|--------|-------|
+| `DOCKERHUB_USERNAME` | Your Docker Hub login |
+| `DOCKERHUB_TOKEN`    | A Docker Hub **access token** (not your password). Create one at https://hub.docker.com/settings/security |
+
+The workflow uses these secrets only when pushing on `master`. PRs build and smoke-test without ever needing them.
 
 ### docker-compose
 

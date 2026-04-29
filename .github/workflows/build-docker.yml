@@ -1,6 +1,7 @@
 # Reusable workflow: builds the Codeplex AI Docker image, smoke-tests it
 # (boots the container and verifies /health returns 200 with the expected
-# envelope shape), and optionally pushes the image to GHCR.
+# envelope shape), and optionally publishes the image to GHCR, Docker Hub,
+# or both.
 #
 # Call from another workflow with:
 #
@@ -9,9 +10,17 @@
 #       uses: ./.github/workflows/build-docker.yml
 #       permissions:
 #         contents: read
-#         packages: write   # only needed when push=true
+#         packages: write   # only needed when push_to_ghcr=true
 #       with:
-#         push: true        # set false for PRs; true for trunk pushes
+#         push_to_ghcr: true
+#         push_to_dockerhub: true
+#         dockerhub_image: "luniemma/codeplex-ai"
+#       secrets: inherit    # so DOCKERHUB_USERNAME/DOCKERHUB_TOKEN reach this workflow
+#
+# Required repo secrets when push_to_dockerhub is true:
+#   DOCKERHUB_USERNAME — your Docker Hub login
+#   DOCKERHUB_TOKEN    — Docker Hub access token (NOT your password)
+#                        Create at https://hub.docker.com/settings/security
 
 name: Build Docker image
 
@@ -28,15 +37,33 @@ on:
         type: string
         required: false
         default: latest
-      push:
-        description: "Push the image to GHCR after the smoke test passes."
+      push_to_ghcr:
+        description: "Push the image to GitHub Container Registry."
         type: boolean
         required: false
         default: false
+      push_to_dockerhub:
+        description: "Push the image to Docker Hub. Requires DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets."
+        type: boolean
+        required: false
+        default: false
+      dockerhub_image:
+        description: "Docker Hub image path (e.g. 'luniemma/codeplex-ai'). Required when push_to_dockerhub=true."
+        type: string
+        required: false
+        default: ""
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
     outputs:
-      image:
-        description: "Fully-qualified image reference (registry/owner/repo:tag)."
-        value: ${{ jobs.build.outputs.image }}
+      ghcr_image:
+        description: "GHCR image reference (registry/owner/repo:tag) — empty when not pushed."
+        value: ${{ jobs.build.outputs.ghcr_image }}
+      dockerhub_image:
+        description: "Docker Hub image reference (user/repo:tag) — empty when not pushed."
+        value: ${{ jobs.build.outputs.dockerhub_image }}
       digest:
         description: "Image digest (sha256:...)."
         value: ${{ jobs.build.outputs.digest }}
@@ -44,9 +71,6 @@ on:
 # Same Node 24 opt-in as the other workflows — see ARCHITECTURE.md.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  REGISTRY: ghcr.io
-  # Use the lowercased repo name — GHCR rejects mixed-case image paths.
-  IMAGE_BASE: ghcr.io/${{ github.repository }}
 
 jobs:
   build:
@@ -54,36 +78,94 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write   # for GHCR push when enabled
     outputs:
-      image: ${{ steps.meta.outputs.image }}
+      ghcr_image: ${{ steps.meta.outputs.ghcr_image }}
+      dockerhub_image: ${{ steps.meta.outputs.dockerhub_image }}
       digest: ${{ steps.build.outputs.digest }}
 
     steps:
+      - name: Validate inputs
+        if: ${{ inputs.push_to_dockerhub && inputs.dockerhub_image == '' }}
+        run: |
+          echo "::error::push_to_dockerhub=true but dockerhub_image input is empty."
+          echo "Pass dockerhub_image (e.g. 'youruser/codeplex-ai') from the caller workflow."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compute lowercased image reference
+      - name: Compute image references
         id: meta
         run: |
           # GHCR requires the repo path to be all-lowercase. Don't trust the
           # caller to provide it that way.
           repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          image_base="${{ env.REGISTRY }}/${repo_lower}"
-          echo "image_base=${image_base}" >> "$GITHUB_OUTPUT"
-          echo "image=${image_base}:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          echo "image_sha=${image_base}:sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+          ghcr_base="ghcr.io/${repo_lower}"
+          ghcr_tag="${ghcr_base}:${{ inputs.tag }}"
+          ghcr_sha="${ghcr_base}:sha-${GITHUB_SHA::12}"
+
+          dh_image="${{ inputs.dockerhub_image }}"
+          if [ -n "$dh_image" ]; then
+            dh_tag="${dh_image}:${{ inputs.tag }}"
+            dh_sha="${dh_image}:sha-${GITHUB_SHA::12}"
+          else
+            dh_tag=""
+            dh_sha=""
+          fi
+
+          # The "smoke" tag is what the local container is run under; we use
+          # the GHCR tag because it's always present.
+          smoke_tag="$ghcr_tag"
+
+          {
+            echo "ghcr_tag=${ghcr_tag}"
+            echo "ghcr_sha=${ghcr_sha}"
+            echo "dh_tag=${dh_tag}"
+            echo "dh_sha=${dh_sha}"
+            echo "smoke_tag=${smoke_tag}"
+            echo "ghcr_image=$([ '${{ inputs.push_to_ghcr }}' = 'true' ] && echo $ghcr_tag || echo '')"
+            echo "dockerhub_image=$([ '${{ inputs.push_to_dockerhub }}' = 'true' ] && echo $dh_tag || echo '')"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: ${{ inputs.push }}
+        if: ${{ inputs.push_to_ghcr }}
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ inputs.push_to_dockerhub }}
+        uses: docker/login-action@v3
+        with:
+          # No registry argument → defaults to docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Compute the full set of tags to attach at build time. Include both
+      # registries so docker push later finds matching local refs without us
+      # having to docker tag manually.
+      - name: Compose tag list
+        id: tags
+        run: |
+          tags=""
+          tags="${tags}${{ steps.meta.outputs.ghcr_tag }}"$'\n'
+          tags="${tags}${{ steps.meta.outputs.ghcr_sha }}"$'\n'
+          if [ '${{ inputs.push_to_dockerhub }}' = 'true' ]; then
+            tags="${tags}${{ steps.meta.outputs.dh_tag }}"$'\n'
+            tags="${tags}${{ steps.meta.outputs.dh_sha }}"$'\n'
+          fi
+          {
+            echo "tags<<__EOT__"
+            echo "${tags}"
+            echo "__EOT__"
+          } >> "$GITHUB_OUTPUT"
 
       # Build with load=true so the image goes into the local Docker daemon
       # for the smoke test below. We push separately after the test passes —
@@ -94,9 +176,7 @@ jobs:
         with:
           context: .
           file: ${{ inputs.dockerfile }}
-          tags: |
-            ${{ steps.meta.outputs.image }}
-            ${{ steps.meta.outputs.image_sha }}
+          tags: ${{ steps.tags.outputs.tags }}
           push: false
           load: true
           cache-from: type=gha
@@ -112,12 +192,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE="${{ steps.meta.outputs.image }}"
+          IMAGE="${{ steps.meta.outputs.smoke_tag }}"
           echo "Booting $IMAGE..."
 
           # No real API keys needed — /health doesn't call upstream providers.
-          # We pass placeholder values so the config dataclass loads cleanly
-          # even if any future change starts validating at boot.
           docker run -d \
             --name codeplex-smoke \
             -p 8000:8000 \
@@ -131,7 +209,6 @@ jobs:
               echo "/health responded after ${i} attempts."
               cat /tmp/health.json
               echo
-              # Verify the standard envelope shape: { data: { status: 'healthy' } }
               status=$(jq -r '.data.status // empty' /tmp/health.json)
               if [ "$status" != "healthy" ]; then
                 echo "::error::Unexpected /health body — expected data.status='healthy'"
@@ -154,17 +231,21 @@ jobs:
         if: always()
         run: docker rm -f codeplex-smoke 2>/dev/null || true
 
-      # Push only after the smoke test passes. We re-tag and push the locally
-      # loaded image rather than rebuilding (cheap, and we know exactly what
-      # we tested).
-      - name: Push image to GHCR
-        if: ${{ inputs.push && success() }}
+      # Push only after the smoke test passes — `success()` ensures we don't
+      # publish an image that didn't boot.
+      - name: Push to GHCR
+        if: ${{ inputs.push_to_ghcr && success() }}
         run: |
           set -e
-          docker push "${{ steps.meta.outputs.image }}"
-          docker push "${{ steps.meta.outputs.image_sha }}"
-          echo "Pushed ${{ steps.meta.outputs.image }}"
-          echo "Pushed ${{ steps.meta.outputs.image_sha }}"
+          docker push "${{ steps.meta.outputs.ghcr_tag }}"
+          docker push "${{ steps.meta.outputs.ghcr_sha }}"
+
+      - name: Push to Docker Hub
+        if: ${{ inputs.push_to_dockerhub && success() }}
+        run: |
+          set -e
+          docker push "${{ steps.meta.outputs.dh_tag }}"
+          docker push "${{ steps.meta.outputs.dh_sha }}"
 
       - name: Summarize
         if: always()
@@ -175,8 +256,17 @@ jobs:
             echo "| Field | Value |"
             echo "|---|---|"
             echo "| Dockerfile | \`${{ inputs.dockerfile }}\` |"
-            echo "| Image | \`${{ steps.meta.outputs.image }}\` |"
-            echo "| SHA tag | \`${{ steps.meta.outputs.image_sha }}\` |"
-            echo "| Pushed | \`${{ inputs.push }}\` |"
             echo "| Smoke test | \`${{ job.status }}\` |"
+            if [ '${{ inputs.push_to_ghcr }}' = 'true' ]; then
+              echo "| GHCR image | \`${{ steps.meta.outputs.ghcr_tag }}\` |"
+              echo "| GHCR SHA tag | \`${{ steps.meta.outputs.ghcr_sha }}\` |"
+            else
+              echo "| GHCR | _skipped_ |"
+            fi
+            if [ '${{ inputs.push_to_dockerhub }}' = 'true' ]; then
+              echo "| Docker Hub image | \`${{ steps.meta.outputs.dh_tag }}\` |"
+              echo "| Docker Hub SHA tag | \`${{ steps.meta.outputs.dh_sha }}\` |"
+            else
+              echo "| Docker Hub | _skipped_ |"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
