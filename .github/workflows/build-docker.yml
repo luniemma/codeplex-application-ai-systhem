@@ -213,20 +213,35 @@ jobs:
         run: docker rm -f codeplex-smoke 2>/dev/null || true
 
       # ── Stage 2: scan the smoke-tested amd64 image for CVEs ──
-      - name: Trivy CVE scan
-        # SHA-pinned for supply-chain security; tag reference kept in comment
-        # so Dependabot can match + bump it.
+      # Two scans — first prints human-readable CVE table to the log so a
+      # failed build is debuggable from the workflow output alone; second
+      # produces SARIF for upload to GitHub Code Scanning. Both SHA-pinned
+      # for supply-chain security; trailing tag comment lets Dependabot
+      # update it.
+      - name: Trivy CVE scan (human-readable, gates the build)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.smoke_tag }}
           severity: ${{ inputs.cve_severity }}
           exit-code: "1"
-          ignore-unfixed: true   # don't fail on CVEs with no fix available
+          ignore-unfixed: true   # CVEs with no fix available are noise, not actionable
+          format: table
+
+      - name: Trivy CVE scan (SARIF for Code Scanning)
+        # `always()` ensures we still get findings into Code Scanning even
+        # when the build-gating scan above already failed.
+        if: always()
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.smoke_tag }}
+          severity: ${{ inputs.cve_severity }}
+          exit-code: "0"        # don't fail again — first scan already gated
+          ignore-unfixed: true
           format: sarif
           output: trivy-results.sarif
 
       - name: Upload Trivy SARIF to Code Scanning
-        if: always()
+        if: always() && hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
