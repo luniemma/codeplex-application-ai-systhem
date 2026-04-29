@@ -514,7 +514,7 @@ kubectl apply -f k8s/
 kubectl -n codeplex-ai port-forward svc/grafana 3000:3000   # admin / admin
 ```
 
-The bundled Grafana auto-imports a "Codeplex AI" dashboard with request rate, latency percentiles, error rate, top routes, and per-pod resource usage.
+The bundled Grafana auto-imports a "Codeplex AI" dashboard with request rate, latency percentiles, error rate, top routes, and per-pod request rate / p95 latency.
 
 ### Helm chart ([`helm/codeplex-ai/`](helm/codeplex-ai/README.md))
 
@@ -531,6 +531,56 @@ helm install codeplex-ai ./helm/codeplex-ai \
 
 The chart's `values.yaml` documents every knob: replicas, autoscaling thresholds, resource limits, ingress, ServiceMonitor labels, etc. For full options see [helm/codeplex-ai/README.md](helm/codeplex-ai/README.md).
 
+### One-shot script
+
+[`scripts/dev-cluster.sh`](scripts/dev-cluster.sh) wraps the apply + wait + port-forward dance into one command. Works on any cluster `kubectl` is currently pointed at — minikube, kind, Docker Desktop, k3d, a real one. There are matching `make` shortcuts:
+
+```bash
+make k8s-up        # apply manifests, wait for rollouts, start port-forwards
+make k8s-status    # show pod state + which port-forwards are alive
+make k8s-urls      # print the browseable endpoint URLs (also printed by `up`)
+make k8s-down      # stop port-forwards (manifests stay applied)
+make k8s-nuke      # delete the namespace (everything goes)
+```
+
+Override ports with env vars if 18000/19090/13000 collide with something else: `APP_PORT=28000 make k8s-up`.
+
+### Browseable endpoints
+
+After `make k8s-up`, all three services are reachable on localhost. POST endpoints (`/api/analyze`, `/api/generate`, `/api/optimize`, `/api/chat`, `/api/batch-analyze`) won't render in a browser address bar — drive them from the playground at `/` or with `curl -X POST`.
+
+**Codeplex AI** — `http://localhost:18000`
+
+| URL                                                              | What                                                                  |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [`/`](http://localhost:18000/)                                   | Web playground (Chat / Analyze / Generate tabs, provider switcher)    |
+| [`/health`](http://localhost:18000/health) · [`/livez`](http://localhost:18000/livez) | Liveness — 200 if the WSGI app is responding (used by k8s livenessProbe) |
+| [`/readyz`](http://localhost:18000/readyz)                       | Readiness — 200 only if at least one provider key is configured, else 503 |
+| [`/metrics`](http://localhost:18000/metrics)                     | Prometheus exposition format (request counters, latency histograms, build info) |
+| [`/api/models`](http://localhost:18000/api/models)               | JSON list of registered providers                                     |
+
+**Prometheus** — `http://localhost:19090`
+
+| URL                                                              | What                                                                       |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [`/`](http://localhost:19090/)                                   | Prometheus UI (graph, alerts, status)                                      |
+| [`/targets`](http://localhost:19090/targets)                     | Scrape target health — should show 3 `up` (2 app pods + Prometheus self-scrape) |
+| [`/graph?g0.expr=flask_http_request_total`](http://localhost:19090/graph?g0.expr=flask_http_request_total) | Quick graph: HTTP request counter      |
+| [`/-/healthy`](http://localhost:19090/-/healthy)                 | Liveness probe                                                             |
+| [`/-/reload`](http://localhost:19090/-/reload)                   | POST to hot-reload `prometheus.yml` after a ConfigMap edit                 |
+
+**Grafana** — `http://localhost:13000` (login `admin` / `admin`, change in [50-grafana-secret.yaml](k8s/50-grafana-secret.yaml) before exposing)
+
+| URL                                                                                            | What                                                            |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [`/`](http://localhost:13000/)                                                                 | Grafana home (redirects to login)                               |
+| [`/d/codeplex-ai/codeplex-ai`](http://localhost:13000/d/codeplex-ai/codeplex-ai)               | Direct link to the auto-provisioned "Codeplex AI" dashboard      |
+| [`/dashboards`](http://localhost:13000/dashboards)                                             | All dashboards (find under the **Codeplex** folder)             |
+| [`/datasources`](http://localhost:13000/datasources)                                           | Datasource config — Prometheus is auto-provisioned at startup   |
+| [`/api/health`](http://localhost:13000/api/health)                                             | Health endpoint                                                  |
+
+The dashboard panels populate as you generate traffic — hit `/api/models` or play in the web UI a few times, then refresh Grafana to see the request rate and latency graphs move.
+
 ### What gets exported to Prometheus
 
 The app mounts `/metrics` via [`app/metrics.py`](app/metrics.py) (auto-instruments every route through `prometheus-flask-exporter`). Useful series:
@@ -540,9 +590,10 @@ The app mounts `/metrics` via [`app/metrics.py`](app/metrics.py) (auto-instrumen
 | `flask_http_request_total{method,status,path}` | HTTP request count (used for rate, error rate, top routes)    |
 | `flask_http_request_duration_seconds_bucket`   | Histogram for p50/p95/p99 latency                              |
 | `flask_http_request_exceptions_total`          | Unhandled exceptions per route                                |
-| `process_resident_memory_bytes`                | Per-pod RSS                                                    |
-| `process_cpu_seconds_total`                    | Per-pod CPU                                                    |
-| `codeplex_ai_build_info{version=...}`          | Build/version label for dashboards                            |
+| `flask_exporter_info{version=...}`             | Exporter version (one per pod)                                 |
+| `codeplex_ai_build_info{version=...}`          | App build/version label for dashboards                        |
+
+> **Note:** `process_resident_memory_bytes` / `process_cpu_seconds_total` are **not** exported under the gunicorn multiprocess collector (it only aggregates worker-written metrics, not live process collector reads). For per-pod CPU / memory, scrape cAdvisor or kube-state-metrics — typical kube-prometheus-stack setups already do this.
 
 The compose file in [docker-compose.yml](docker-compose.yml) wires up the optional Redis cache and Postgres database. For dev with auto-reload, use [docker-compose.dev.yml](docker-compose.dev.yml).
 

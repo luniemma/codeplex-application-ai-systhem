@@ -1,6 +1,6 @@
 # Makefile for Codeplex AI
 
-.PHONY: help install dev prod test lint format clean docker-build docker-up docker-down docker-logs
+.PHONY: help install dev prod test lint format clean docker-build docker-up docker-down docker-logs k8s-up k8s-down k8s-status k8s-urls k8s-nuke
 
 help:
 	@echo "Codeplex AI - Available Commands"
@@ -18,6 +18,13 @@ help:
 	@echo "make docker-dev     - Start Docker containers (dev)"
 	@echo "make docker-down    - Stop Docker containers"
 	@echo "make docker-logs    - View Docker logs"
+	@echo ""
+	@echo "Kubernetes (uses whatever cluster kubectl currently points at):"
+	@echo "make k8s-up         - Apply manifests + wait + start port-forwards (18000/19090/13000)"
+	@echo "make k8s-down       - Stop port-forwards (manifests stay applied)"
+	@echo "make k8s-status     - Show pod + port-forward state"
+	@echo "make k8s-urls       - Print the browse-able endpoint URLs"
+	@echo "make k8s-nuke       - Delete the namespace (everything goes)"
 
 install:
 	pip install -r requirements.txt
@@ -67,6 +74,21 @@ docker-logs:
 
 docker-logs-dev:
 	docker-compose -f docker-compose.dev.yml logs -f codeplex-api-dev
+
+k8s-up:
+	bash scripts/dev-cluster.sh up
+
+k8s-down:
+	bash scripts/dev-cluster.sh down
+
+k8s-status:
+	bash scripts/dev-cluster.sh status
+
+k8s-urls:
+	bash scripts/dev-cluster.sh urls
+
+k8s-nuke:
+	bash scripts/dev-cluster.sh nuke
 
 db-migrate:
 	alembic upgrade head
