@@ -5,7 +5,7 @@ AI Services Module - Integration with multiple AI providers
 import logging
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, ClassVar
 
 try:
@@ -87,6 +87,12 @@ class AIProvider(ABC):
         """Chat with AI model"""
         pass
 
+    def chat_stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        """Stream chat tokens. Default falls back to a one-shot chat() so
+        providers that don't override streaming still work — they just
+        deliver everything in one chunk."""
+        yield self.chat(messages)
+
 
 class OpenAIProvider(AIProvider):
     """OpenAI API Provider"""
@@ -160,6 +166,25 @@ class OpenAIProvider(AIProvider):
             logger.error(f"OpenAI chat error: {e!s}")
             raise
 
+    def chat_stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        """Stream chat tokens from OpenAI (`stream=True`)."""
+        try:
+            stream = self.client.ChatCompletion.create(
+                model=config.OPENAI_MODEL,
+                messages=messages,
+                temperature=config.OPENAI_TEMPERATURE,
+                stream=True,
+            )
+            for chunk in stream:
+                # Older openai==0.27.x SDK exposes delta as a dict-like.
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None) or (delta.get("content") if isinstance(delta, dict) else None)
+                if content:
+                    yield content
+        except Exception as e:
+            logger.error(f"OpenAI chat_stream error: {e!s}")
+            raise
+
 
 class AnthropicProvider(AIProvider):
     """Anthropic Claude Provider"""
@@ -216,6 +241,19 @@ class AnthropicProvider(AIProvider):
             return response.content[0].text
         except Exception as e:
             logger.error(f"Anthropic chat error: {e!s}")
+            raise
+
+    def chat_stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        """Stream chat tokens from Claude via the SDK's text_stream context."""
+        try:
+            with self.client.messages.stream(
+                model=config.ANTHROPIC_MODEL, max_tokens=2048, messages=messages
+            ) as stream:
+                for text in stream.text_stream:
+                    if text:
+                        yield text
+        except Exception as e:
+            logger.error(f"Anthropic chat_stream error: {e!s}")
             raise
 
 
@@ -280,6 +318,25 @@ class GoogleProvider(AIProvider):
             logger.error(f"Google chat error: {e!s}")
             raise
 
+    def chat_stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        """Stream chat tokens from Google's generative API (stream=True)."""
+        try:
+            model = self.client.GenerativeModel(config.GOOGLE_MODEL)
+            chat = model.start_chat()
+            # Replay history (non-streamed) so the stream-target message has
+            # the right context. Cheaper than running a full chain through
+            # generate_content() each time.
+            for msg in messages[:-1]:
+                chat.send_message(msg.get("content", ""), stream=False)
+            response = chat.send_message(messages[-1].get("content", ""), stream=True)
+            for chunk in response:
+                text = getattr(chunk, "text", None)
+                if text:
+                    yield text
+        except Exception as e:
+            logger.error(f"Google chat_stream error: {e!s}")
+            raise
+
 
 class AIServiceFactory:
     """Factory for creating AI service providers"""
@@ -331,3 +388,33 @@ def chat(messages: list[dict[str, str]], provider: str = "openai") -> str:
     """Chat with AI with specified provider"""
     ai_provider = AIServiceFactory.create_provider(provider)
     return _timed_call(provider, "chat", lambda: ai_provider.chat(messages))
+
+
+def chat_stream(messages: list[dict[str, str]], provider: str = "openai") -> Iterator[str]:
+    """Stream chat tokens for the given provider. Not cached — streaming
+    responses are stateful per request. Provider creation can still raise
+    `ValueError` for missing keys; surface that to the caller so the route
+    handler can emit a sensible error event."""
+    if has_request_context():
+        g.ai_provider = provider
+    ai_provider = AIServiceFactory.create_provider(provider)
+    started = time.perf_counter()
+    chunks = 0
+    try:
+        for chunk in ai_provider.chat_stream(messages):
+            chunks += 1
+            yield chunk
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "provider_call provider=%s op=chat_stream status=ok duration_ms=%d chunks=%d",
+            provider, "chat_stream", elapsed_ms,
+            extra={"provider": provider, "op": "chat_stream", "duration_ms": elapsed_ms, "status": "ok", "chunks": chunks},
+        )
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.warning(
+            "provider_call provider=%s op=chat_stream status=error duration_ms=%d error=%s",
+            provider, elapsed_ms, exc,
+            extra={"provider": provider, "op": "chat_stream", "duration_ms": elapsed_ms, "status": "error"},
+        )
+        raise

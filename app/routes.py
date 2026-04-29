@@ -2,11 +2,12 @@
 API Routes Module - REST endpoints for Codeplex AI
 """
 
+import json
 import logging
 
-from flask import Blueprint, request
+from flask import Blueprint, Response, request, stream_with_context
 
-from app.ai_services import AIServiceFactory, analyze_code, generate_code
+from app.ai_services import AIServiceFactory, analyze_code, chat_stream, generate_code
 from app.ai_services import chat as ai_chat
 from app.config import config
 from app.utils import create_response
@@ -165,6 +166,47 @@ Provide:
     except Exception as e:
         logger.error(f"Optimization error: {e!s}")
         return create_response({"error": f"Code optimization failed: {e}"}, 500)
+
+
+@api_bp.route("/chat/stream", methods=["POST"])
+def chat_stream_route():
+    """Streaming chat endpoint — Server-Sent Events.
+
+    Each event is a `data: <json>` line where the JSON has either a `chunk`
+    (text token) or an `error` (string). The stream terminates with
+    `data: [DONE]`. Client side: parse with `fetch + ReadableStream` rather
+    than `EventSource` (which only supports GET).
+    """
+    data = request.get_json(silent=True) or {}
+    if "messages" not in data:
+        return create_response({"error": "Messages are required"}, 400)
+    messages = data.get("messages") or []
+    provider = data.get("provider", "openai")
+    if not messages or not isinstance(messages, list):
+        return create_response({"error": "Messages must be a non-empty list"}, 400)
+
+    def _events():
+        try:
+            for chunk in chat_stream(messages, provider):
+                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+        except ValueError as exc:
+            # Missing key / unknown provider — surface as a typed error event.
+            logger.warning(f"chat_stream validation: {exc!s}")
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        except Exception as exc:
+            logger.error(f"chat_stream upstream error: {exc!s}")
+            yield f"data: {json.dumps({'error': f'Chat stream failed: {exc}'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return Response(
+        stream_with_context(_events()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tell nginx not to buffer SSE
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @api_bp.route("/chat", methods=["POST"])
