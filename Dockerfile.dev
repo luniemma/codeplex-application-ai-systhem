@@ -1,6 +1,6 @@
 # Development Dockerfile for Codeplex AI
 
-FROM python:3.11
+FROM python:3.14
 
 WORKDIR /app
 
