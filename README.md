@@ -4,6 +4,8 @@ A Flask service that fronts **OpenAI**, **Anthropic**, and **Google Gemini** beh
 
 Pick any provider per request via a `provider` field; the service abstracts away the SDK differences and returns a consistent response envelope.
 
+![Codeplex AI playground — homepage with provider status pills, capability cards, interactive playground, and endpoint reference](docs/playground.png)
+
 ---
 
 ## Table of contents
@@ -439,7 +441,7 @@ For production behind nginx, see [nginx.conf](nginx.conf) — proxies `/api/*` t
 Honest about what's there vs. what's stubbed:
 
 - **Rate limiting** — `ENABLE_RATE_LIMITING` flag exists, but no decorator currently enforces it. Wire `app/utils.py:rate_limit` (which is also currently a placeholder) into the routes if you need it.
-- **Caching** — Redis client is in place and `cache_result` decorator is defined, but the route handlers don't yet apply it. AI calls are not memoized today.
+- **Caching** — `@cache_result` is wired onto the AI helpers (`analyze_code`, `generate_code`, `chat`); identical `(input, provider)` pairs are memoized through Redis when available, no-op when not. Per-route TTL/key customization isn't exposed yet.
 - **Analytics** — `ENABLE_ANALYTICS` flag and `ANALYTICS_BATCH_SIZE` exist, but no analytics pipeline is wired.
 - **Database** — SQLAlchemy session factory is configured, but no models hit the DB. `codeplex.db` is created but unused. The DB layer is scaffolded for future per-request logging.
 - **JWT auth** — `JWT_SECRET` is in config, but no auth middleware guards the endpoints. The API is open by default.

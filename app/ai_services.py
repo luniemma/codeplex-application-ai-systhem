@@ -5,6 +5,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 from app.config import config
+from app.cache import cache_result
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,9 @@ class AIServiceFactory:
         return list(AIServiceFactory._providers.keys())
 
 
-# Helper functions
+# Helper functions — wrapped with @cache_result so identical (input, provider) pairs
+# are memoized. No-ops gracefully if Redis is unreachable or ENABLE_CACHING is False.
+@cache_result(key_prefix='analyze_code')
 def analyze_code(code: str, provider: str = 'openai') -> Dict[str, Any]:
     """Analyze code with specified provider"""
     try:
@@ -259,6 +262,7 @@ def analyze_code(code: str, provider: str = 'openai') -> Dict[str, Any]:
         raise
 
 
+@cache_result(key_prefix='generate_code')
 def generate_code(prompt: str, provider: str = 'openai') -> str:
     """Generate code with specified provider"""
     try:
@@ -269,6 +273,7 @@ def generate_code(prompt: str, provider: str = 'openai') -> str:
         raise
 
 
+@cache_result(key_prefix='chat')
 def chat(messages: List[Dict[str, str]], provider: str = 'openai') -> str:
     """Chat with AI with specified provider"""
     try:
