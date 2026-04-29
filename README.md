@@ -264,6 +264,50 @@ Serves the web playground (HTML).
 
 ---
 
+## Logging & observability
+
+On boot, the service logs a startup banner showing effective config — environment, bind, configured providers (with placeholder keys correctly counted as "disabled"), Redis reachability, and (redacted) database URL — so an operator can verify things at a glance without grepping through the codebase:
+
+```
+============================================================
+Codeplex AI starting
+  environment   = development
+  bind          = 127.0.0.1:8000
+  log_level     = INFO
+  log_format    = text
+  providers     = enabled=['google'], disabled=['openai', 'anthropic']
+  cache (redis) = not reachable (in-memory fallback)
+  caching flag  = True
+  database_url  = sqlite:///./codeplex.db
+============================================================
+```
+
+Every request gets a 12-character **request ID** that's:
+- Generated in a `before_request` hook
+- Attached to every log record produced by that request via Flask's `g`
+- Returned to the client in an `X-Request-ID` response header so users can quote it in bug reports
+
+Each successful request produces a small set of correlated log lines that, taken together, tell you exactly what happened:
+
+```
+INFO app.cache         [req=33d51f31d790] cache miss prefix=chat — calling upstream
+INFO app.ai_services   [req=33d51f31d790] provider_call provider=google op=chat status=ok duration_ms=882
+INFO app.access        [req=33d51f31d790] POST /api/chat 200 (1243ms, 234B)
+```
+
+`/health` requests are demoted to DEBUG so health probes don't drown out real traffic. Provider failures (deprecated model, rate limit, network error) log at WARNING with the provider name, op, duration, and the actual upstream error message.
+
+### Log format
+
+Set `LOG_FORMAT=text` (default) for human-readable output, or `LOG_FORMAT=json` for one JSON object per line — drop into Datadog, Loki, CloudWatch, or any aggregator without parsing pain. JSON output includes `request_id`, `ai_provider`, `duration_ms`, and any custom keys passed via `logger.info(..., extra={...})`.
+
+```json
+{"timestamp":"2026-04-29T02:09:57.123Z","level":"INFO","logger":"app.ai_services",
+ "message":"provider_call provider=google op=chat status=ok duration_ms=882",
+ "request_id":"33d51f31d790","ai_provider":"google","provider":"google",
+ "op":"chat","duration_ms":882,"status":"ok"}
+```
+
 ## Configuration
 
 All settings come from `.env`. Copy `.env.example` to `.env` and fill in keys.

@@ -2,12 +2,46 @@
 AI Services Module - Integration with multiple AI providers
 """
 import logging
-from typing import List, Dict, Any, Optional
+import time
+from typing import List, Dict, Any, Optional, Callable
 from abc import ABC, abstractmethod
+
+try:
+    from flask import g, has_request_context
+except ImportError:  # pragma: no cover
+    g = None  # type: ignore
+    has_request_context = lambda: False  # type: ignore
+
 from app.config import config
 from app.cache import cache_result
 
 logger = logging.getLogger(__name__)
+
+
+def _timed_call(provider: str, op: str, fn: Callable):
+    """Run `fn` and emit a single structured log line covering provider, op,
+    status, and duration. Tags flask.g with the provider so all downstream
+    logs in the same request can be filtered by provider."""
+    if has_request_context():
+        g.ai_provider = provider
+    started = time.perf_counter()
+    try:
+        result = fn()
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "provider_call provider=%s op=%s status=ok duration_ms=%d",
+            provider, op, elapsed_ms,
+            extra={"provider": provider, "op": op, "duration_ms": elapsed_ms, "status": "ok"},
+        )
+        return result
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.warning(
+            "provider_call provider=%s op=%s status=error duration_ms=%d error=%s",
+            provider, op, elapsed_ms, exc,
+            extra={"provider": provider, "op": op, "duration_ms": elapsed_ms, "status": "error"},
+        )
+        raise
 
 
 def _is_key_configured(key: str) -> bool:
@@ -249,37 +283,27 @@ class AIServiceFactory:
         return list(AIServiceFactory._providers.keys())
 
 
-# Helper functions — wrapped with @cache_result so identical (input, provider) pairs
-# are memoized. No-ops gracefully if Redis is unreachable or ENABLE_CACHING is False.
+# Helper functions — wrapped with @cache_result so identical (input, provider)
+# pairs are memoized. No-ops gracefully if Redis is unreachable or
+# ENABLE_CACHING is False. Each upstream call is wrapped in _timed_call so
+# we get a single log line per real provider invocation (cache hits skip it).
 @cache_result(key_prefix='analyze_code')
 def analyze_code(code: str, provider: str = 'openai') -> Dict[str, Any]:
     """Analyze code with specified provider"""
-    try:
-        ai_provider = AIServiceFactory.create_provider(provider)
-        return ai_provider.analyze_code(code)
-    except Exception as e:
-        logger.error(f"Code analysis failed: {str(e)}")
-        raise
+    ai_provider = AIServiceFactory.create_provider(provider)
+    return _timed_call(provider, "analyze_code", lambda: ai_provider.analyze_code(code))
 
 
 @cache_result(key_prefix='generate_code')
 def generate_code(prompt: str, provider: str = 'openai') -> str:
     """Generate code with specified provider"""
-    try:
-        ai_provider = AIServiceFactory.create_provider(provider)
-        return ai_provider.generate_code(prompt)
-    except Exception as e:
-        logger.error(f"Code generation failed: {str(e)}")
-        raise
+    ai_provider = AIServiceFactory.create_provider(provider)
+    return _timed_call(provider, "generate_code", lambda: ai_provider.generate_code(prompt))
 
 
 @cache_result(key_prefix='chat')
 def chat(messages: List[Dict[str, str]], provider: str = 'openai') -> str:
     """Chat with AI with specified provider"""
-    try:
-        ai_provider = AIServiceFactory.create_provider(provider)
-        return ai_provider.chat(messages)
-    except Exception as e:
-        logger.error(f"Chat failed: {str(e)}")
-        raise
+    ai_provider = AIServiceFactory.create_provider(provider)
+    return _timed_call(provider, "chat", lambda: ai_provider.chat(messages))
 

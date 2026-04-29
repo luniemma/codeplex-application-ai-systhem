@@ -105,14 +105,15 @@ def cache_result(ttl: int = config.CACHE_TTL, key_prefix: str = None):
             # Try to get from cache
             cached_value = cache_client.get(key)
             if cached_value is not None:
-                logger.debug(f"Cache hit for {key}")
+                # Hits are common — keep at DEBUG to avoid swamping logs.
+                logger.debug("cache hit prefix=%s", prefix)
                 return cached_value
-            
-            # Call function and cache result
+
+            # Cache miss → INFO so you can correlate "this request actually
+            # talked to the upstream provider" without flipping log levels.
+            logger.info("cache miss prefix=%s — calling upstream", prefix)
             result = f(*args, **kwargs)
             cache_client.set(key, result, ttl)
-            logger.debug(f"Cached result for {key}")
-            
             return result
         return decorated_function
     return decorator
