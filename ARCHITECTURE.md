@@ -6,6 +6,273 @@ If you only want to *use* the service, [README.md](README.md) is the right start
 
 ---
 
+## Architecture diagrams
+
+Five views of the same system, in increasing detail. Each diagram answers a different question.
+
+### 1. System context — *who talks to what?*
+
+The 30,000-foot view. Where Codeplex AI sits between users and upstream AI providers.
+
+```mermaid
+graph LR
+    Browser["🖥️ Browser<br/>(playground UI)"]
+    CLI["💻 curl / scripts<br/>(API clients)"]
+
+    subgraph CodeplexAI["Codeplex AI service"]
+        Flask["Flask app<br/>main.py + app/"]
+    end
+
+    OpenAIApi["☁️ OpenAI API<br/>api.openai.com"]
+    AnthropicApi["☁️ Anthropic API<br/>api.anthropic.com"]
+    GoogleApi["☁️ Google Gemini<br/>generativelanguage.<br/>googleapis.com"]
+
+    Redis[("⚡ Redis<br/>(optional cache)")]
+    DB[("💾 SQLite / Postgres<br/>(currently scaffolded,<br/>not used)")]
+
+    Browser -->|"HTTPS"| Flask
+    CLI -->|"HTTPS"| Flask
+    Flask -->|"openai SDK"| OpenAIApi
+    Flask -->|"anthropic SDK"| AnthropicApi
+    Flask -->|"google-generativeai"| GoogleApi
+    Flask -.->|"if reachable;<br/>silent fallback"| Redis
+    Flask -.->|"SQLAlchemy"| DB
+
+    classDef external fill:#1b2440,stroke:#6b8cff,color:#e6ebf5
+    classDef storage fill:#2a1a4a,stroke:#8d6bff,color:#e6ebf5
+    classDef app fill:#13352b,stroke:#3ddc97,color:#e6ebf5
+    class OpenAIApi,AnthropicApi,GoogleApi external
+    class Redis,DB storage
+    class Flask app
+```
+
+### 2. Component diagram — *how are the modules wired?*
+
+Every Python module in `app/` and how they depend on each other. Arrows mean "imports / calls into".
+
+```mermaid
+graph TB
+    Env[".env file<br/>(secrets, config)"]
+    Main["main.py<br/>create_app()"]
+
+    subgraph BlueprintLayer["Blueprint layer"]
+        Web["app/web.py<br/>web_bp · GET /"]
+        Routes["app/routes.py<br/>api_bp · /api/*<br/>health_bp · /health"]
+    end
+
+    subgraph ServiceLayer["Service layer"]
+        AIServices["app/ai_services.py<br/>analyze_code · generate_code · chat<br/>(decorated with @cache_result)"]
+        Factory["AIServiceFactory<br/>(in ai_services.py)"]
+    end
+
+    subgraph ProviderLayer["Provider layer"]
+        OpenAI["OpenAIProvider"]
+        Anthropic["AnthropicProvider"]
+        Google["GoogleProvider"]
+    end
+
+    subgraph SupportLayer["Support modules"]
+        Cache["app/cache.py<br/>CacheClient + @cache_result<br/>InMemoryCache fallback"]
+        Config["app/config.py<br/>Config dataclass"]
+        Utils["app/utils.py<br/>create_response,<br/>decorators, helpers"]
+        Models["app/models.py<br/>dataclass schemas"]
+        Database["app/database.py<br/>SQLAlchemy session<br/>(scaffolded)"]
+    end
+
+    Env -->|"loaded at boot"| Config
+
+    Main --> Web
+    Main --> Routes
+
+    Web --> Config
+    Routes --> Utils
+    Routes --> AIServices
+
+    AIServices --> Cache
+    AIServices --> Factory
+    Factory --> OpenAI
+    Factory --> Anthropic
+    Factory --> Google
+
+    OpenAI --> Config
+    Anthropic --> Config
+    Google --> Config
+    Cache --> Config
+    Database --> Config
+
+    classDef secret fill:#3a1f1f,stroke:#ff6b6b,color:#fff
+    classDef entry fill:#2a1a4a,stroke:#8d6bff,color:#fff
+    classDef blue fill:#1b2440,stroke:#6b8cff,color:#fff
+    classDef green fill:#13352b,stroke:#3ddc97,color:#fff
+    class Env secret
+    class Main entry
+    class Web,Routes blue
+    class AIServices,Factory,OpenAI,Anthropic,Google green
+```
+
+### 3. Request sequence — *what happens when someone sends a chat message?*
+
+Full lifecycle of a single `POST /api/chat` request, including the cache hit/miss branch and the markdown rendering on the return trip.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Browser
+    participant Routes as routes.py<br/>chat()
+    participant Helper as ai_services.py<br/>chat()<br/>@cache_result
+    participant CacheC as CacheClient<br/>(Redis)
+    participant Factory as AIServiceFactory
+    participant Provider as GoogleProvider
+    participant Upstream as Google Gemini API
+
+    User->>Browser: types prompt, clicks Send
+    Browser->>Routes: POST /api/chat<br/>{ messages, provider:"google" }
+    Routes->>Routes: get_json(silent=True)<br/>validate 'messages' present
+    Routes->>Helper: chat(messages, "google")
+
+    Helper->>CacheC: get(cache_key)
+
+    alt Cache hit
+        CacheC-->>Helper: cached response
+        Note right of Helper: skip upstream call<br/>(memoized)
+    else Cache miss / Redis unreachable
+        CacheC-->>Helper: None
+        Helper->>Factory: create_provider("google")
+        Factory->>Factory: _is_key_configured(<br/>config.GOOGLE_API_KEY)?
+        alt Key missing or "your_*"
+            Factory-->>Routes: raise ValueError<br/>("not configured")
+            Note over Routes: caught by ValueError handler<br/>→ 400 with helpful message
+        else Key valid
+            Factory-->>Helper: GoogleProvider()
+            Helper->>Provider: chat(messages)
+            Provider->>Upstream: generate_content(...)
+            alt Upstream success
+                Upstream-->>Provider: model output
+                Provider-->>Helper: response text
+                Helper->>CacheC: set(cache_key, response, ttl)
+            else Upstream error<br/>(rate limit, deprecated model, …)
+                Upstream-->>Provider: error
+                Provider-->>Routes: raise
+                Note over Routes: caught by Exception handler<br/>→ 500 with f"Chat failed: {e}"
+            end
+        end
+    end
+
+    Helper-->>Routes: response string
+    Routes->>Routes: create_response(<br/>{ provider, messages, response },<br/>200 )
+    Routes-->>Browser: 200 + envelope JSON
+
+    Browser->>Browser: extractContent()<br/>→ data.response
+    Browser->>Browser: marked.parse(content)<br/>render to HTML
+    Browser-->>User: formatted markdown
+```
+
+### 4. Provider class hierarchy — *how is provider abstraction structured?*
+
+The factory pattern that lets us add a fourth provider without touching routes or helpers.
+
+```mermaid
+classDiagram
+    class AIProvider {
+        <<abstract>>
+        +analyze_code(code) Dict
+        +generate_code(prompt) str
+        +chat(messages) str
+    }
+
+    class OpenAIProvider {
+        -client : openai module
+        +__init__() raises ValueError
+        +analyze_code(code) Dict
+        +generate_code(prompt) str
+        +chat(messages) str
+    }
+
+    class AnthropicProvider {
+        -client : Anthropic
+        +__init__() raises ValueError
+        +analyze_code(code) Dict
+        +generate_code(prompt) str
+        +chat(messages) str
+    }
+
+    class GoogleProvider {
+        -client : genai module
+        +__init__() raises ValueError
+        +analyze_code(code) Dict
+        +generate_code(prompt) str
+        +chat(messages) str
+    }
+
+    class AIServiceFactory {
+        -_providers : Dict[str, type]
+        +create_provider(name) AIProvider$
+        +get_available_providers() List[str]$
+    }
+
+    class _is_key_configured {
+        <<helper>>
+        +(key: str) bool
+    }
+
+    AIProvider <|-- OpenAIProvider : implements
+    AIProvider <|-- AnthropicProvider : implements
+    AIProvider <|-- GoogleProvider : implements
+    AIServiceFactory ..> AIProvider : creates
+    OpenAIProvider ..> _is_key_configured : guards init
+    AnthropicProvider ..> _is_key_configured : guards init
+    GoogleProvider ..> _is_key_configured : guards init
+```
+
+### 5. Deployment topology — *how does it run in production?*
+
+The shape of a Docker-Compose-based production deployment per [DEPLOYMENT.md](DEPLOYMENT.md) and [docker-compose.yml](docker-compose.yml). Dev setups can collapse this to a single `python main.py` process.
+
+```mermaid
+graph TB
+    Client["🌍 Client<br/>(browser / curl)"]
+
+    subgraph DockerHost["🐳 Docker host"]
+        nginx["nginx container<br/>:80, :443<br/>nginx.conf"]
+
+        subgraph AppService["app service<br/>(Dockerfile)"]
+            gunicorn["gunicorn<br/>workers (4)<br/>gunicorn_config.py"]
+            Flask["Flask app<br/>main.py:create_app()<br/>+ app/ blueprints"]
+        end
+
+        Redis[("redis service<br/>:6379")]
+        Postgres[("postgres service<br/>:5432<br/>(scaffolded)")]
+
+        EnvMount[".env<br/>(mounted as secret)"]
+    end
+
+    subgraph External["External AI providers"]
+        OpenAIApi["api.openai.com"]
+        AnthropicApi["api.anthropic.com"]
+        GoogleApi["generativelanguage.<br/>googleapis.com"]
+    end
+
+    Client -->|"HTTPS"| nginx
+    nginx -->|"proxy_pass<br/>http://app:8000"| gunicorn
+    gunicorn -->|"WSGI"| Flask
+    Flask -.->|"loaded at boot"| EnvMount
+    Flask -.->|"GET/SETEX"| Redis
+    Flask -.->|"SQL"| Postgres
+    Flask -->|"HTTPS"| OpenAIApi
+    Flask -->|"HTTPS"| AnthropicApi
+    Flask -->|"HTTPS"| GoogleApi
+
+    classDef edge fill:#1b2440,stroke:#6b8cff,color:#fff
+    classDef storage fill:#2a1a4a,stroke:#8d6bff,color:#fff
+    classDef external fill:#3a2a1a,stroke:#ffce5c,color:#fff
+    class nginx,gunicorn,Flask edge
+    class Redis,Postgres,EnvMount storage
+    class OpenAIApi,AnthropicApi,GoogleApi external
+```
+
+---
+
 ## Layers
 
 The app is structured as four cleanly-separated layers. Each layer talks only to the one directly below it.
