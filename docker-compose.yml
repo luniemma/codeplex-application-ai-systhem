@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # Main Application
+  codeplex-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codeplex-ai-api
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Codeplex AI
+      - ENVIRONMENT=production
+      - DEBUG=False
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_WORKERS=4
+      - LOG_LEVEL=INFO
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - DATABASE_URL=postgresql://codeplex:codeplex_pass@postgres:5432/codeplex_ai
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./logs:/app/logs
+      - ./app:/app/app
+    networks:
+      - codeplex-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: codeplex-postgres
+    environment:
+      - POSTGRES_DB=codeplex_ai
+      - POSTGRES_USER=codeplex
+      - POSTGRES_PASSWORD=codeplex_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - codeplex-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codeplex"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: codeplex-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - codeplex-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Nginx Reverse Proxy (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: codeplex-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - codeplex-api
+    networks:
+      - codeplex-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  codeplex-network:
+    driver: bridge
+

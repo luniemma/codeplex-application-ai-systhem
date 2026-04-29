@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  codeplex-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: codeplex-ai-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - FLASK_APP=main.py
+      - FLASK_ENV=development
+      - DEBUG=True
+      - API_PORT=8000
+      - LOG_LEVEL=DEBUG
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - DATABASE_URL=postgresql://codeplex:codeplex_pass@postgres-dev:5432/codeplex_ai
+      - REDIS_URL=redis://redis-dev:6379/0
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    networks:
+      - codeplex-dev
+    restart: unless-stopped
+
+  postgres-dev:
+    image: postgres:15-alpine
+    container_name: codeplex-postgres-dev
+    environment:
+      - POSTGRES_DB=codeplex_ai
+      - POSTGRES_USER=codeplex
+      - POSTGRES_PASSWORD=codeplex_pass
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - codeplex-dev
+    restart: unless-stopped
+
+  redis-dev:
+    image: redis:7-alpine
+    container_name: codeplex-redis-dev
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - codeplex-dev
+    restart: unless-stopped
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  codeplex-dev:
+    driver: bridge
+
