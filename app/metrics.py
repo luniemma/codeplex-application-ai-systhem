@@ -29,5 +29,14 @@ def install_metrics(app, version: str = "1.0.0") -> PrometheusMetrics:
     else:
         metrics = PrometheusMetrics(app)
 
-    metrics.info("codeplex_ai_build_info", "Codeplex AI build info", version=version)
+    # In tests, create_app() runs once per test in the same process, so
+    # install_metrics() is called repeatedly. The build_info gauge lives on
+    # prometheus_client's default registry (a process singleton), so the
+    # second registration raises "Duplicated timeseries". We only need it
+    # registered once — swallow the dup so the test fixture works.
+    try:
+        metrics.info("codeplex_ai_build_info", "Codeplex AI build info", version=version)
+    except ValueError as e:
+        if "Duplicated" not in str(e):
+            raise
     return metrics
