@@ -1,5 +1,11 @@
 name: tests
 
+# Opt JS-based actions (checkout, setup-python) onto Node.js 24.
+# Node 20 is deprecated on GitHub-hosted runners and will be removed 2026-09-16.
+# Remove this once actions/* publish versions that ship Node 24 natively.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 on:
   push:
     branches: [master, main]

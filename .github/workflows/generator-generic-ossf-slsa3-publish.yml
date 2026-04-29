@@ -11,6 +11,11 @@
 # For more information about SLSA and how it improves the supply-chain, visit slsa.dev.
 
 name: SLSA generic generator
+
+# Opt JS-based actions onto Node.js 24 (Node 20 deprecation 2026-09-16).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 on:
   workflow_dispatch:
   release:
