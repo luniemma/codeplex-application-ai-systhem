@@ -1,0 +1,43 @@
+# Caller workflow that delegates to build-docker.yml.
+# - On every push to master: build, smoke test, and publish to GHCR.
+# - On pull requests: build and smoke test only — never push.
+
+name: Docker
+
+on:
+  push:
+    branches: [master, main]
+    # Avoid running for doc-only changes that can't break the build.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "Dockerfile.dev"
+      - "requirements.txt"
+      - "main.py"
+      - "app/**"
+      - "gunicorn_config.py"
+      - ".github/workflows/docker.yml"
+      - ".github/workflows/build-docker.yml"
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push the resulting image to GHCR"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  build:
+    name: Build & publish image
+    uses: ./.github/workflows/build-docker.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      # Push when pushing to master/main, or on manual dispatch with push=true.
+      # Otherwise just build + smoke test (PRs, doc changes, etc.).
+      push: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && inputs.push) }}

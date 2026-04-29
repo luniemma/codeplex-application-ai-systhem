@@ -1,0 +1,182 @@
+# Reusable workflow: builds the Codeplex AI Docker image, smoke-tests it
+# (boots the container and verifies /health returns 200 with the expected
+# envelope shape), and optionally pushes the image to GHCR.
+#
+# Call from another workflow with:
+#
+#   jobs:
+#     docker:
+#       uses: ./.github/workflows/build-docker.yml
+#       permissions:
+#         contents: read
+#         packages: write   # only needed when push=true
+#       with:
+#         push: true        # set false for PRs; true for trunk pushes
+
+name: Build Docker image
+
+on:
+  workflow_call:
+    inputs:
+      dockerfile:
+        description: "Path to the Dockerfile to build."
+        type: string
+        required: false
+        default: Dockerfile
+      tag:
+        description: "Human-readable tag (in addition to the immutable SHA tag)."
+        type: string
+        required: false
+        default: latest
+      push:
+        description: "Push the image to GHCR after the smoke test passes."
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      image:
+        description: "Fully-qualified image reference (registry/owner/repo:tag)."
+        value: ${{ jobs.build.outputs.image }}
+      digest:
+        description: "Image digest (sha256:...)."
+        value: ${{ jobs.build.outputs.digest }}
+
+# Same Node 24 opt-in as the other workflows — see ARCHITECTURE.md.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  REGISTRY: ghcr.io
+  # Use the lowercased repo name — GHCR rejects mixed-case image paths.
+  IMAGE_BASE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: Build & smoke test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute lowercased image reference
+        id: meta
+        run: |
+          # GHCR requires the repo path to be all-lowercase. Don't trust the
+          # caller to provide it that way.
+          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          image_base="${{ env.REGISTRY }}/${repo_lower}"
+          echo "image_base=${image_base}" >> "$GITHUB_OUTPUT"
+          echo "image=${image_base}:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${image_base}:sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build with load=true so the image goes into the local Docker daemon
+      # for the smoke test below. We push separately after the test passes —
+      # never publish an image that hasn't booted at least once.
+      - name: Build image (load into local daemon)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.image_sha }}
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Inject build labels so anyone inspecting the image can trace it
+          # back to a commit and a workflow run.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+
+      - name: Smoke test — boot container, hit /health
+        run: |
+          set -euo pipefail
+
+          IMAGE="${{ steps.meta.outputs.image }}"
+          echo "Booting $IMAGE..."
+
+          # No real API keys needed — /health doesn't call upstream providers.
+          # We pass placeholder values so the config dataclass loads cleanly
+          # even if any future change starts validating at boot.
+          docker run -d \
+            --name codeplex-smoke \
+            -p 8000:8000 \
+            -e GOOGLE_API_KEY=smoke-test-not-real \
+            -e DEBUG=False \
+            "$IMAGE"
+
+          echo "Waiting up to 60s for /health to respond..."
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health -o /tmp/health.json 2>/dev/null; then
+              echo "/health responded after ${i} attempts."
+              cat /tmp/health.json
+              echo
+              # Verify the standard envelope shape: { data: { status: 'healthy' } }
+              status=$(jq -r '.data.status // empty' /tmp/health.json)
+              if [ "$status" != "healthy" ]; then
+                echo "::error::Unexpected /health body — expected data.status='healthy'"
+                exit 1
+              fi
+              echo "Smoke test passed: /health returned 200 with healthy status."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::Container did not become healthy within 60s."
+          echo "--- docker ps ---"
+          docker ps -a
+          echo "--- container logs ---"
+          docker logs codeplex-smoke || true
+          exit 1
+
+      - name: Tear down smoke container
+        if: always()
+        run: docker rm -f codeplex-smoke 2>/dev/null || true
+
+      # Push only after the smoke test passes. We re-tag and push the locally
+      # loaded image rather than rebuilding (cheap, and we know exactly what
+      # we tested).
+      - name: Push image to GHCR
+        if: ${{ inputs.push && success() }}
+        run: |
+          set -e
+          docker push "${{ steps.meta.outputs.image }}"
+          docker push "${{ steps.meta.outputs.image_sha }}"
+          echo "Pushed ${{ steps.meta.outputs.image }}"
+          echo "Pushed ${{ steps.meta.outputs.image_sha }}"
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Docker build summary"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Dockerfile | \`${{ inputs.dockerfile }}\` |"
+            echo "| Image | \`${{ steps.meta.outputs.image }}\` |"
+            echo "| SHA tag | \`${{ steps.meta.outputs.image_sha }}\` |"
+            echo "| Pushed | \`${{ inputs.push }}\` |"
+            echo "| Smoke test | \`${{ job.status }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

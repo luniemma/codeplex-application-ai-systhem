@@ -55,6 +55,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-# Run application
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120", "--access-logfile", "logs/access.log", "--error-logfile", "logs/error.log", "main:app"]
+# Run application.
+# main:create_app() — factory pattern; main.py only exposes `app` inside its
+# __main__ block, so gunicorn must call the factory itself. The parens are
+# how gunicorn detects this is a factory rather than a WSGI variable.
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120", "--access-logfile", "logs/access.log", "--error-logfile", "logs/error.log", "main:create_app()"]
 

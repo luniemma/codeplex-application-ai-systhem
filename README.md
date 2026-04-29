@@ -368,14 +368,30 @@ The test suite (`tests/test_api.py`) mocks the AI providers via `unittest.mock.p
 
 ## Docker
 
+### Build locally
+
 ```bash
 # Build and run as a single container
 docker build -t codeplex-ai .
 docker run -p 8000:8000 --env-file .env codeplex-ai
 ```
 
+### Pull from GHCR
+
+Every push to `master` triggers [.github/workflows/docker.yml](.github/workflows/docker.yml), which builds the image, smoke-tests it (boots the container and verifies `/health` returns the healthy envelope), and publishes it to GitHub Container Registry. To use the published image:
+
 ```bash
-# Or with the bundled compose file (includes Redis, Postgres, nginx)
+docker pull ghcr.io/luniemma/codeplex-application-ai-systhem:latest
+docker run -p 8000:8000 --env-file .env \
+  ghcr.io/luniemma/codeplex-application-ai-systhem:latest
+```
+
+> First-time visibility: GHCR packages are private by default. After the first publish, go to your GitHub profile → Packages → this package → Package settings → *Change visibility* if you want unauthenticated pulls.
+
+### docker-compose
+
+```bash
+# Bundled compose file (includes Redis, Postgres, nginx)
 docker-compose up
 ```
 
