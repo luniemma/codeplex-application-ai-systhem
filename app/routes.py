@@ -19,11 +19,11 @@ health_bp = Blueprint('health', __name__)
 @health_bp.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({
+    return create_response({
         'status': 'healthy',
         'service': 'codeplex-ai',
         'version': '1.0.0'
-    }), 200
+    }, 200)
 
 
 @api_bp.route('/models', methods=['GET'])
@@ -44,12 +44,14 @@ def list_models():
 def analyze():
     """Analyze code endpoint"""
     try:
-        # Validate request
-        if not request.json or 'code' not in request.json:
+        # silent=True returns None on malformed JSON (instead of raising 400),
+        # so we can return our own envelope-shaped error.
+        data = request.get_json(silent=True) or {}
+        if 'code' not in data:
             return create_response({'error': 'Code is required'}, 400)
-        
-        code = request.json.get('code')
-        provider = request.json.get('provider', 'openai')
+
+        code = data.get('code')
+        provider = data.get('provider', 'openai')
         
         if not code:
             return create_response({'error': 'Code cannot be empty'}, 400)
@@ -70,12 +72,12 @@ def analyze():
 def generate():
     """Generate code endpoint"""
     try:
-        # Validate request
-        if not request.json or 'prompt' not in request.json:
+        data = request.get_json(silent=True) or {}
+        if 'prompt' not in data:
             return create_response({'error': 'Prompt is required'}, 400)
-        
-        prompt = request.json.get('prompt')
-        provider = request.json.get('provider', 'openai')
+
+        prompt = data.get('prompt')
+        provider = data.get('provider', 'openai')
         
         if not prompt:
             return create_response({'error': 'Prompt cannot be empty'}, 400)
@@ -100,16 +102,16 @@ def generate():
 def optimize():
     """Optimize code endpoint"""
     try:
-        # Validate request
-        if not request.json or 'code' not in request.json:
+        data = request.get_json(silent=True) or {}
+        if 'code' not in data:
             return create_response({'error': 'Code is required'}, 400)
-        
-        code = request.json.get('code')
-        provider = request.json.get('provider', 'openai')
-        
+
+        code = data.get('code')
+        provider = data.get('provider', 'openai')
+
         if not code:
             return create_response({'error': 'Code cannot be empty'}, 400)
-        
+
         # Create optimization prompt
         prompt = f"""Analyze and optimize the following code for performance, readability, and best practices:
 
@@ -141,12 +143,12 @@ Provide:
 def chat():
     """Chat with AI endpoint"""
     try:
-        # Validate request
-        if not request.json or 'messages' not in request.json:
+        data = request.get_json(silent=True) or {}
+        if 'messages' not in data:
             return create_response({'error': 'Messages are required'}, 400)
-        
-        messages = request.json.get('messages', [])
-        provider = request.json.get('provider', 'openai')
+
+        messages = data.get('messages', [])
+        provider = data.get('provider', 'openai')
         
         if not messages or not isinstance(messages, list):
             return create_response({'error': 'Messages must be a non-empty list'}, 400)
@@ -172,11 +174,12 @@ def chat():
 def batch_analyze():
     """Batch analyze multiple code snippets"""
     try:
-        if not request.json or 'codes' not in request.json:
+        data = request.get_json(silent=True) or {}
+        if 'codes' not in data:
             return create_response({'error': 'Codes array is required'}, 400)
-        
-        codes = request.json.get('codes', [])
-        provider = request.json.get('provider', 'openai')
+
+        codes = data.get('codes', [])
+        provider = data.get('provider', 'openai')
         
         if not codes or not isinstance(codes, list):
             return create_response({'error': 'Codes must be a non-empty list'}, 400)
