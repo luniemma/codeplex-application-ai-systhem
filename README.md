@@ -84,6 +84,26 @@ python main.py
 
 Then open **http://127.0.0.1:8000/** in your browser.
 
+### Smoke-test the running server
+
+Once it's up, these URLs work in any browser (all `GET`):
+
+| URL | What you'll see |
+|-----|-----------------|
+| http://localhost:8000/             | Web playground (Chat / Analyze / Generate tabs) |
+| http://localhost:8000/health       | `{"status": "healthy", ...}` — liveness alias |
+| http://localhost:8000/livez        | Same as `/health` — Kubernetes liveness probe |
+| http://localhost:8000/readyz       | `200` if at least one provider key is configured, else `503` |
+| http://localhost:8000/api/models   | List of registered providers |
+
+The other endpoints (`/api/analyze`, `/api/generate`, `/api/optimize`, `/api/chat`, `/api/batch-analyze`) are **POST-only** — they won't render in a browser address bar. Hit them from the playground at `/`, or with `curl`:
+
+```bash
+curl -s -X POST http://localhost:8000/api/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"code":"def add(a,b):\n    return a+b","provider":"google"}'
+```
+
 ---
 
 ## Web playground
@@ -115,12 +135,29 @@ All endpoints return the standard envelope:
 
 Errors share the same shape: `data.error` contains the message.
 
-### `GET /health`
+> **CORS** is configured for `/api/*` only (see `CORS_ORIGINS`). Health probes (`/livez`, `/health`, `/readyz`) and the web UI (`/`) are same-origin.
+>
+> **Rate limit:** the `/api/*` blueprint is limited to **30 requests/minute** per client (configurable via the `app.security` limiter; backed by Redis if `REDIS_URL` is reachable, in-memory otherwise).
 
-Liveness probe. No auth, no body.
+### `GET /livez`, `GET /health`
+
+Liveness probe — both paths are aliases. Returns `200` as long as the WSGI app is responding (used by Kubernetes' `livenessProbe`; failure restarts the pod). No auth, no body.
 
 ```json
 { "data": { "status": "healthy", "service": "codeplex-ai", "version": "1.0.0" } }
+```
+
+### `GET /readyz`
+
+Readiness probe. Returns `200` only if **at least one provider key is configured** (i.e. the service can plausibly serve a real request); otherwise `503`. Used by Kubernetes' `readinessProbe` — a failing `/readyz` removes the pod from the service load balancer without restarting it.
+
+```json
+{
+  "data": {
+    "status": "ready",
+    "providers": { "openai": false, "anthropic": false, "google": true }
+  }
+}
 ```
 
 ### `GET /api/models`
@@ -399,7 +436,7 @@ The test suite (`tests/test_api.py`) mocks the AI providers via `unittest.mock.p
 
 | Class | What it tests |
 |-------|---------------|
-| `TestHealthEndpoint`        | `/health` returns 200 with `status: healthy` |
+| `TestHealthEndpoint`        | `/health` returns 200 with `status: healthy` (alias `/livez` shares the handler; `/readyz` is not currently covered) |
 | `TestModelsEndpoint`        | `/api/models` returns the provider list |
 | `TestAnalyzeEndpoint`       | Missing/empty code → 400; valid → 200 with mocked result |
 | `TestGenerateEndpoint`      | Missing/empty prompt → 400; valid → 200 |
