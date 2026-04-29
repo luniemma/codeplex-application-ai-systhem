@@ -21,12 +21,19 @@ RUN pip install --user --no-cache-dir -r requirements.txt
 # Stage 2: Runtime
 FROM python:3.11-slim
 
+# Create the non-root user before any COPY so we can use --chown.
+# Putting the pip --user tree under /root/.local (the default for root) and
+# then dropping to a non-root user makes the binaries unreachable: /root is
+# mode 0700, so codeplex can't traverse it. We instead place everything
+# under /home/codeplex/.local, owned by codeplex from the start.
+RUN useradd -m -u 1000 codeplex
+
 WORKDIR /app
 
-# Set environment variables
+# PATH points to codeplex's user-installed scripts (gunicorn lives here).
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH=/root/.local/bin:$PATH \
+    PATH=/home/codeplex/.local/bin:$PATH \
     ENVIRONMENT=production
 
 # Install runtime dependencies
@@ -35,17 +42,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python dependencies from builder
-COPY --from=builder /root/.local /root/.local
+# Copy Python dependencies from builder, retargeted to codeplex's home
+# and chown'd in the same step (no separate chmod/chown pass needed).
+COPY --from=builder --chown=codeplex:codeplex /root/.local /home/codeplex/.local
 
-# Copy application code
-COPY . .
+# Copy application code with correct ownership.
+COPY --chown=codeplex:codeplex . .
 
-# Create logs directory
-RUN mkdir -p logs
+# Logs directory must be writable by gunicorn workers running as codeplex.
+RUN mkdir -p logs && chown codeplex:codeplex logs
 
-# Create non-root user
-RUN useradd -m -u 1000 codeplex && chown -R codeplex:codeplex /app
 USER codeplex
 
 # Health check
