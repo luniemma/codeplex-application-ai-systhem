@@ -1,36 +1,49 @@
 # Codeplex AI
 
-A Flask service that fronts OpenAI, Anthropic, and Google Gemini behind a unified set of endpoints — analyze, generate, optimize, chat, and batch-process code — plus a built-in interactive web playground.
+A Flask service that fronts **OpenAI**, **Anthropic**, and **Google Gemini** behind a single set of REST endpoints — analyze, generate, optimize, chat, and batch-analyze code — plus a built-in interactive web playground at `/` with markdown-rendered responses.
 
-## What you get
+Pick any provider per request via a `provider` field; the service abstracts away the SDK differences and returns a consistent response envelope.
 
-- **Unified API** over three providers (OpenAI / Anthropic / Google), pick per request via `provider`
-- **Web playground** at `/` — pick a tab, type a prompt, get markdown-rendered responses (no Postman needed)
-- **Live provider status** — green/red pills tell you which keys are configured before you hit Send
-- **Helpful errors** — missing keys, deprecated models, and upstream failures are surfaced with the actual cause
-- **Sensible defaults** — SQLite for local DB, in-memory cache fallback if Redis is unreachable
+---
 
-## Endpoints
+## Table of contents
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET    | `/`                  | Web playground |
-| GET    | `/health`            | Liveness probe |
-| GET    | `/api/models`        | List configured providers |
-| POST   | `/api/analyze`       | Analyze a code snippet |
-| POST   | `/api/generate`      | Generate code from a prompt |
-| POST   | `/api/optimize`      | Optimize a code snippet |
-| POST   | `/api/chat`          | Multi-turn chat |
-| POST   | `/api/batch-analyze` | Analyze a list of snippets |
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Web playground](#web-playground)
+- [API reference](#api-reference)
+- [Configuration](#configuration)
+- [How a request flows](#how-a-request-flows)
+- [Testing](#testing)
+- [Docker](#docker)
+- [Troubleshooting](#troubleshooting)
+- [Project layout](#project-layout)
+- [Known limitations](#known-limitations)
+- [License](#license)
 
-All POST endpoints accept JSON with an optional `provider` field (`openai` | `anthropic` | `google`).
+---
+
+## Features
+
+- **Three providers, one API** — OpenAI, Anthropic, and Google Gemini, selected via a `provider` field on each request
+- **Web playground** at `/` with three interactive tabs (Chat / Analyze / Generate), provider switcher, live status pills showing which keys are configured, and **proper markdown rendering** of model output (headings, lists, code blocks, tables) plus a *Show raw JSON* toggle
+- **Standardized response envelope** — every endpoint returns `{ timestamp, status_code, data }` for consistent client parsing
+- **Helpful errors** — missing keys, deprecated models, and upstream failures surface the actual cause; placeholder keys (`your_*_key_here`) are detected and rejected before any upstream call
+- **Optional Redis cache** — falls back silently to in-memory cache if Redis is unreachable, so local dev never requires Redis
+- **SQLite default** for the database — no setup required to get started; swap to PostgreSQL via `DATABASE_URL` for production
+- **Docker-ready** — Dockerfile and docker-compose included
+- **CORS configured** for `/api/*` endpoints
+- **Unit-tested** — 13 tests covering every endpoint with mocked AI providers
+
+---
 
 ## Quick start
 
 ### Prerequisites
-- **Python 3.11** (3.12+ is not supported — some dependencies don't have wheels for it yet)
-- A Google AI Studio key (free tier, easiest to get) — https://aistudio.google.com/app/apikey
-  - Or an Anthropic / OpenAI key if you prefer those providers
+
+- **Python 3.11** (3.12+ won't work — some pinned dependencies don't have wheels for 3.12)
+- A Google AI Studio API key (free tier, no card required) — https://aistudio.google.com/app/apikey
+  - Or an Anthropic / OpenAI key if you prefer
 
 ### Windows (PowerShell)
 
@@ -38,21 +51,17 @@ All POST endpoints accept JSON with an optional `provider` field (`openai` | `an
 git clone https://github.com/luniemma/codeplex-application-ai-systhem.git
 cd codeplex-application-ai-systhem
 
-# Create venv and install deps
 python -m venv venv
 .\venv\Scripts\python.exe -m pip install --upgrade pip
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# Configure environment
 copy .env.example .env
-# Edit .env and replace the placeholder API keys with real ones
+# Edit .env — replace placeholders with at least one real API key
+# Recommended: GOOGLE_MODEL=gemini-2.5-flash (the default 'gemini-pro' is deprecated)
 
-# Run
 $env:PYTHONUTF8 = "1"
 .\venv\Scripts\python.exe main.py
 ```
-
-Open http://127.0.0.1:8000/ in your browser.
 
 ### macOS / Linux
 
@@ -66,98 +75,380 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env and replace the placeholder API keys with real ones
+# Edit .env — replace placeholders with at least one real API key
 
 python main.py
 ```
 
-## Configuration
+Then open **http://127.0.0.1:8000/** in your browser.
 
-All config is read from `.env` at startup (see `.env.example` for the full template). The keys that matter:
+---
 
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `OPENAI_API_KEY`     | — | Get from https://platform.openai.com/api-keys (paid only) |
-| `ANTHROPIC_API_KEY`  | — | Get from https://console.anthropic.com/ |
-| `GOOGLE_API_KEY`     | — | Get from https://aistudio.google.com/app/apikey (free tier available) |
-| `OPENAI_MODEL`       | `gpt-4` | Set to `gpt-3.5-turbo` if you don't have GPT-4 access |
-| `ANTHROPIC_MODEL`    | `claude-3-opus` | |
-| `GOOGLE_MODEL`       | `gemini-pro` | **Deprecated** — set to `gemini-2.5-flash` (or `gemini-1.5-flash`) |
-| `API_HOST`           | `0.0.0.0` | Use `127.0.0.1` for local-only |
-| `API_PORT`           | `8000` | |
-| `DEBUG`              | `False` | |
-| `DATABASE_URL`       | `sqlite:///./codeplex.db` | |
-| `REDIS_URL`          | `redis://localhost:6379/0` | Optional; cache falls back to in-memory |
+## Web playground
 
-## Docker
+The homepage at `/` gives you a self-contained UI for the API — no Postman, no curl needed.
 
-```bash
-docker build -t codeplex-ai .
-docker run -p 8000:8000 --env-file .env codeplex-ai
+**What you'll see:**
+- **Provider status pills** — green = key configured, red = not configured (placeholders count as not configured)
+- **Capability cards** for the six core operations
+- **Three interactive tabs** — Chat, Analyze, Generate. Pick a provider, type a prompt, click Send. Responses render as proper markdown.
+- **Endpoint reference table** with method, path, body shape, and description
+- **Show raw JSON** toggle on every result, in case you want to inspect the full envelope
+
+The playground calls the same `/api/*` endpoints your client code would, so anything you can do in the playground you can do from a script.
+
+---
+
+## API reference
+
+All endpoints return the standard envelope:
+
+```json
+{
+  "timestamp": "2026-04-29T01:15:14.523864",
+  "status_code": 200,
+  "data": { /* endpoint-specific payload */ }
+}
 ```
 
-Or with the bundled compose file:
+Errors share the same shape: `data.error` contains the message.
 
-```bash
-docker-compose up
+### `GET /health`
+
+Liveness probe. No auth, no body.
+
+```json
+{ "data": { "status": "healthy", "service": "codeplex-ai", "version": "1.0.0" } }
 ```
 
-## Testing
+### `GET /api/models`
 
-```bash
-pytest tests/
-pytest tests/ --cov=app
+Lists which providers the service is built with.
+
+```json
+{ "data": { "providers": ["openai", "anthropic", "google"], "count": 3 } }
 ```
 
-## Example: hitting the API directly
+> Note: this lists *registered* providers, not necessarily ones with keys configured. Use the homepage status pills (or check `.env`) to see which are usable.
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"provider":"google","messages":[{"role":"user","content":"Reply with: PONG"}]}'
+### `POST /api/analyze`
+
+Analyze a code snippet with the chosen provider.
+
+**Request**
+```json
+{
+  "code": "def add(a, b):\n    return a + b",
+  "provider": "google"
+}
 ```
 
+**Response**
 ```json
 {
   "data": {
     "provider": "google",
-    "messages": [{"role": "user", "content": "Reply with: PONG"}],
-    "response": "PONG"
-  },
-  "status_code": 200,
-  "timestamp": "..."
+    "analysis": "The function is correct but lacks type hints and a docstring...",
+    "tokens_used": 142
+  }
 }
 ```
 
+**Errors**: `400` if `code` is missing or empty; `400` if the provider's key isn't configured; `500` for upstream failures (with the upstream error message).
+
+### `POST /api/generate`
+
+Generate code from a natural-language prompt.
+
+**Request**
+```json
+{
+  "prompt": "Write a Python function that returns the nth Fibonacci number iteratively.",
+  "provider": "google"
+}
+```
+
+**Response**
+```json
+{
+  "data": {
+    "provider": "google",
+    "prompt": "Write a Python function...",
+    "generated_code": "def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a"
+  }
+}
+```
+
+### `POST /api/optimize`
+
+Rewrite code for performance, readability, and best practices, with rationale. Internally builds a structured prompt asking for issues identified, optimized version, explanation, and performance improvements.
+
+**Request**
+```json
+{
+  "code": "def slow(n):\n    r = []\n    for i in range(n):\n        r = r + [i]\n    return r",
+  "provider": "google"
+}
+```
+
+**Response**
+```json
+{
+  "data": {
+    "provider": "google",
+    "original_code": "def slow(n):...",
+    "optimized_code": "## Issues\n1. Inefficient list concatenation...\n\n## Optimized\n```python\ndef fast(n):\n    return list(range(n))\n```\n..."
+  }
+}
+```
+
+### `POST /api/chat`
+
+Multi-turn chat. Pass an array of `{role, content}` messages.
+
+**Request**
+```json
+{
+  "messages": [
+    { "role": "system", "content": "You are a concise code reviewer." },
+    { "role": "user",   "content": "Why is mutable default arguments a Python footgun?" }
+  ],
+  "provider": "google"
+}
+```
+
+**Response**
+```json
+{
+  "data": {
+    "provider": "google",
+    "messages": [/* echoed input */],
+    "response": "Mutable default arguments are evaluated once at function definition..."
+  }
+}
+```
+
+> Roles supported: `system`, `user`, `assistant`. The Google provider currently maps the conversation onto its `start_chat()` API.
+
+### `POST /api/batch-analyze`
+
+Analyze a list of snippets in one request. Per-item failures don't fail the whole batch.
+
+**Request**
+```json
+{
+  "codes": ["print('hi')", "for i in range(10): pass"],
+  "provider": "google"
+}
+```
+
+**Response**
+```json
+{
+  "data": {
+    "provider": "google",
+    "total": 2,
+    "results": [
+      { "index": 0, "status": "success", "data": { "analysis": "...", "tokens_used": 89 } },
+      { "index": 1, "status": "error",   "error": "..." }
+    ]
+  }
+}
+```
+
+### `GET /`
+
+Serves the web playground (HTML).
+
+---
+
+## Configuration
+
+All settings come from `.env`. Copy `.env.example` to `.env` and fill in keys.
+
+### Required for at least one provider
+
+| Variable | Where to get | Free tier? |
+|----------|--------------|------------|
+| `OPENAI_API_KEY`     | https://platform.openai.com/api-keys      | No (paid only) |
+| `ANTHROPIC_API_KEY`  | https://console.anthropic.com/            | Some free credits on signup |
+| `GOOGLE_API_KEY`     | https://aistudio.google.com/app/apikey    | **Yes — recommended for testing** |
+
+### All settings
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `APP_NAME`             | `Codeplex AI` | |
+| `APP_VERSION`          | `1.0.0` | |
+| `DEBUG`                | `False` | Set `True` for Flask dev mode |
+| `ENVIRONMENT`          | `production` | Used in logs and the homepage footer |
+| `API_HOST`             | `0.0.0.0` | Use `127.0.0.1` for local-only |
+| `API_PORT`             | `8000` | |
+| `API_WORKERS`          | `4` | Used by gunicorn config, not dev mode |
+| `OPENAI_MODEL`         | `gpt-4` | Set to `gpt-3.5-turbo` if no GPT-4 access |
+| `OPENAI_TEMPERATURE`   | `0.7` | |
+| `ANTHROPIC_MODEL`      | `claude-3-opus` | |
+| `GOOGLE_MODEL`         | `gemini-pro` | **Deprecated** — use `gemini-2.5-flash` |
+| `DATABASE_URL`         | `sqlite:///./codeplex.db` | |
+| `REDIS_URL`            | `redis://localhost:6379/0` | Optional; cache falls back to in-memory |
+| `LOG_LEVEL`            | `INFO` | |
+| `LOG_FILE`             | `logs/codeplex.log` | |
+| `SECRET_KEY`           | dev placeholder | **Change for production** |
+| `JWT_SECRET`           | dev placeholder | **Change for production** |
+| `CORS_ORIGINS`         | `*` | Comma-separated for prod |
+| `ENABLE_CACHING`       | `True` | |
+| `ENABLE_RATE_LIMITING` | `True` | (currently a flag only — not enforced) |
+| `MAX_REQUEST_SIZE`     | `10485760` | 10 MB |
+| `REQUEST_TIMEOUT`      | `30` | Seconds |
+| `CACHE_TTL`            | `3600` | Seconds |
+| `CACHE_MAX_SIZE`       | `1000` | In-memory cache item limit |
+
+---
+
+## How a request flows
+
+```
+Browser / curl
+      │
+      ▼
+[ Flask app ]  main.py: create_app()
+      │
+      ▼
+[ Blueprint ]  app/routes.py — validates JSON shape, picks helper
+      │
+      ▼
+[ AI helper ] app/ai_services.py — analyze_code() / generate_code() / chat()
+      │
+      ▼
+[ Factory  ]  AIServiceFactory.create_provider(provider_name)
+      │       (validates API key, raises ValueError if not configured)
+      ▼
+[ Provider ]  OpenAIProvider | AnthropicProvider | GoogleProvider
+      │
+      ▼
+[ Upstream ]  api.openai.com / api.anthropic.com / generativelanguage.googleapis.com
+      │
+      ▼
+[ Wrapped ]   create_response(data, status_code) → standard envelope
+      │
+      ▼
+   Client
+```
+
+Errors are caught at two layers:
+- `ValueError` from missing keys / invalid input → `400` with the actual message
+- All other exceptions → `500` with `f"<operation> failed: {error_message}"` (the underlying error is preserved, not swallowed)
+
+---
+
+## Testing
+
+```bash
+pytest tests/                # run all tests
+pytest tests/ --cov=app      # with coverage
+pytest tests/ -v             # verbose
+```
+
+The test suite (`tests/test_api.py`) mocks the AI providers via `unittest.mock.patch`, so tests don't make network calls and don't need API keys. Coverage:
+
+| Class | What it tests |
+|-------|---------------|
+| `TestHealthEndpoint`        | `/health` returns 200 with `status: healthy` |
+| `TestModelsEndpoint`        | `/api/models` returns the provider list |
+| `TestAnalyzeEndpoint`       | Missing/empty code → 400; valid → 200 with mocked result |
+| `TestGenerateEndpoint`      | Missing/empty prompt → 400; valid → 200 |
+| `TestOptimizeEndpoint`      | Missing code → 400; valid → 200 |
+| `TestChatEndpoint`          | Missing/empty messages → 400; valid → 200 |
+| `TestBatchAnalyzeEndpoint`  | Missing codes → 400; valid → 200 with results array |
+| `TestErrorHandling`         | 404 on unknown route; 400/422 on malformed JSON |
+
+---
+
+## Docker
+
+```bash
+# Build and run as a single container
+docker build -t codeplex-ai .
+docker run -p 8000:8000 --env-file .env codeplex-ai
+```
+
+```bash
+# Or with the bundled compose file (includes Redis, Postgres, nginx)
+docker-compose up
+```
+
+The compose file in [docker-compose.yml](docker-compose.yml) wires up the optional Redis cache and Postgres database. For dev with auto-reload, use [docker-compose.dev.yml](docker-compose.dev.yml).
+
+For production behind nginx, see [nginx.conf](nginx.conf) — proxies `/api/*` to the gunicorn workers configured in [gunicorn_config.py](gunicorn_config.py).
+
+---
+
 ## Troubleshooting
 
-- **`UnicodeEncodeError: 'charmap' codec can't encode character '✓'`** on Windows — run with `$env:PYTHONUTF8 = "1"` before `python main.py`.
-- **`gemini-pro is not found for API version v1beta`** — Google deprecated this model name. Set `GOOGLE_MODEL=gemini-2.5-flash` in `.env` and restart.
-- **`OPENAI_API_KEY is not configured`** when you've set the key — make sure you replaced the `your_openai_key_here` placeholder, not just appended to it. The placeholder check looks for a `your_*` prefix.
-- **VSCode shows "Package X not installed" warnings** — VSCode is using your system Python. `Ctrl+Shift+P` → "Python: Select Interpreter" → pick `.\venv\Scripts\python.exe`.
-- **`source venv/bin/activate` fails on Windows** — that's a Linux path. Use `venv\Scripts\activate` on Windows, or just call `.\venv\Scripts\python.exe` directly without activating.
+| Symptom | Cause / Fix |
+|---------|-------------|
+| `UnicodeEncodeError: 'charmap' codec can't encode '✓'` on Windows | Console encoding is cp1252. Run with `$env:PYTHONUTF8 = "1"` before `python main.py`. |
+| `gemini-pro is not found for API version v1beta` | Google deprecated this model name. Set `GOOGLE_MODEL=gemini-2.5-flash` in `.env` and restart. |
+| `OPENAI_API_KEY is not configured` after setting it | The placeholder check rejects values starting with `your_`. Make sure you replaced the entire value, not just appended to it. |
+| `ResolutionImpossible` during `pip install` | You're on Python 3.12+. Some pinned deps don't have 3.12 wheels — use Python 3.11. |
+| VSCode shows "Package X not installed" warnings | VSCode is using your system Python. `Ctrl+Shift+P` → *Python: Select Interpreter* → pick `.\venv\Scripts\python.exe`. |
+| `source venv/bin/activate` fails on Windows | That's a Linux path. Use `venv\Scripts\activate.bat` on cmd, or just call `.\venv\Scripts\python.exe` directly without activating. |
+| Redis connection failures in logs | Expected if you're not running Redis. The cache falls back to in-memory automatically — ignore unless you need persistence across restarts. |
+| Browser shows 404 at `http://localhost:8000/` | Old version. The current build serves a homepage at `/` — pull the latest `master`. |
+
+---
 
 ## Project layout
 
 ```
 .
-├── main.py                 # Flask app entry point
+├── main.py                   # Flask app factory + dev server entry point
 ├── app/
-│   ├── routes.py           # API endpoints (/api/*, /health)
-│   ├── web.py              # Web playground (/)
-│   ├── ai_services.py      # Provider abstractions (OpenAI/Anthropic/Google)
-│   ├── config.py           # Env-backed config dataclass
-│   ├── cache.py            # Redis cache with in-memory fallback
-│   ├── database.py         # SQLAlchemy session factory
-│   ├── models.py           # Pydantic request/response models
-│   └── utils.py            # Response envelope helpers
-├── tests/test_api.py
-├── requirements.txt
-├── .env.example
+│   ├── __init__.py
+│   ├── routes.py             # /health, /api/* endpoints
+│   ├── web.py                # /  (web playground HTML/CSS/JS)
+│   ├── ai_services.py        # AIProvider ABC + OpenAI/Anthropic/Google impls + factory
+│   ├── config.py             # Env-backed Config dataclass
+│   ├── models.py             # Request/response dataclasses
+│   ├── cache.py              # CacheClient (Redis) + InMemoryCache fallback
+│   ├── database.py           # SQLAlchemy engine + sessionmaker
+│   └── utils.py              # create_response, decorators, helpers
+├── tests/
+│   ├── __init__.py
+│   └── test_api.py           # pytest suite, all endpoints
+├── requirements.txt          # Python deps (trimmed to what's actually imported)
+├── .env.example              # Config template
+├── .gitignore
 ├── Dockerfile
+├── Dockerfile.dev
 ├── docker-compose.yml
-└── nginx.conf
+├── docker-compose.dev.yml
+├── gunicorn_config.py        # Production WSGI server config
+├── nginx.conf                # Reverse-proxy template
+├── verify_startup.py         # Sanity check: deps, env, blueprints
+├── setup.bat                 # Windows setup (calls python, pip, copies .env)
+├── setup.sh                  # Unix setup script (don't use on Windows — bash venv path)
+├── Makefile                  # Common dev commands
+└── quick_test.bat            # Hits a few endpoints with curl
 ```
+
+---
+
+## Known limitations
+
+Honest about what's there vs. what's stubbed:
+
+- **Rate limiting** — `ENABLE_RATE_LIMITING` flag exists, but no decorator currently enforces it. Wire `app/utils.py:rate_limit` (which is also currently a placeholder) into the routes if you need it.
+- **Caching** — Redis client is in place and `cache_result` decorator is defined, but the route handlers don't yet apply it. AI calls are not memoized today.
+- **Analytics** — `ENABLE_ANALYTICS` flag and `ANALYTICS_BATCH_SIZE` exist, but no analytics pipeline is wired.
+- **Database** — SQLAlchemy session factory is configured, but no models hit the DB. `codeplex.db` is created but unused. The DB layer is scaffolded for future per-request logging.
+- **JWT auth** — `JWT_SECRET` is in config, but no auth middleware guards the endpoints. The API is open by default.
+- **`async`/streaming responses** — all calls are blocking. Long generations return only when complete.
+- **`MAX_REQUEST_SIZE`** is enforced at the Flask level via `MAX_CONTENT_LENGTH`, but `REQUEST_TIMEOUT` is not currently applied to upstream calls — slow providers will hold the request open.
+
+If you need any of these wired up for production, open an issue or PR.
+
+---
 
 ## License
 
