@@ -3,17 +3,20 @@ AI Services Module - Integration with multiple AI providers
 """
 import logging
 import time
-from typing import List, Dict, Any, Optional, Callable
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 try:
     from flask import g, has_request_context
 except ImportError:  # pragma: no cover
     g = None  # type: ignore
-    has_request_context = lambda: False  # type: ignore
 
-from app.config import config
+    def has_request_context() -> bool:  # type: ignore[no-redef]
+        return False
+
 from app.cache import cache_result
+from app.config import config
 from app.retry import with_retry
 
 logger = logging.getLogger(__name__)
@@ -61,26 +64,26 @@ def _is_key_configured(key: str) -> bool:
 
 class AIProvider(ABC):
     """Abstract base class for AI providers"""
-    
+
     @abstractmethod
-    def analyze_code(self, code: str) -> Dict[str, Any]:
+    def analyze_code(self, code: str) -> dict[str, Any]:
         """Analyze code and return results"""
         pass
-    
+
     @abstractmethod
     def generate_code(self, prompt: str) -> str:
         """Generate code based on prompt"""
         pass
-    
+
     @abstractmethod
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+    def chat(self, messages: list[dict[str, str]]) -> str:
         """Chat with AI model"""
         pass
 
 
 class OpenAIProvider(AIProvider):
     """OpenAI API Provider"""
-    
+
     def __init__(self):
         if not _is_key_configured(config.OPENAI_API_KEY):
             raise ValueError("OPENAI_API_KEY is not configured. Set a real key in .env (not the 'your_openai_key_here' placeholder) and restart the server.")
@@ -91,8 +94,8 @@ class OpenAIProvider(AIProvider):
         except ImportError:
             logger.error("OpenAI package not installed")
             raise
-    
-    def analyze_code(self, code: str) -> Dict[str, Any]:
+
+    def analyze_code(self, code: str) -> dict[str, Any]:
         """Analyze code using OpenAI"""
         try:
             response = self.client.ChatCompletion.create(
@@ -109,9 +112,9 @@ class OpenAIProvider(AIProvider):
                 "tokens_used": response.usage.total_tokens
             }
         except Exception as e:
-            logger.error(f"OpenAI analysis error: {str(e)}")
+            logger.error(f"OpenAI analysis error: {e!s}")
             raise
-    
+
     def generate_code(self, prompt: str) -> str:
         """Generate code using OpenAI"""
         try:
@@ -125,10 +128,10 @@ class OpenAIProvider(AIProvider):
             )
             return response.choices[0].message.content
         except Exception as e:
-            logger.error(f"OpenAI generation error: {str(e)}")
+            logger.error(f"OpenAI generation error: {e!s}")
             raise
-    
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+
+    def chat(self, messages: list[dict[str, str]]) -> str:
         """Chat with OpenAI"""
         try:
             response = self.client.ChatCompletion.create(
@@ -138,13 +141,13 @@ class OpenAIProvider(AIProvider):
             )
             return response.choices[0].message.content
         except Exception as e:
-            logger.error(f"OpenAI chat error: {str(e)}")
+            logger.error(f"OpenAI chat error: {e!s}")
             raise
 
 
 class AnthropicProvider(AIProvider):
     """Anthropic Claude Provider"""
-    
+
     def __init__(self):
         if not _is_key_configured(config.ANTHROPIC_API_KEY):
             raise ValueError("ANTHROPIC_API_KEY is not configured. Set a real key in .env (not the 'your_anthropic_key_here' placeholder) and restart the server.")
@@ -154,8 +157,8 @@ class AnthropicProvider(AIProvider):
         except ImportError:
             logger.error("Anthropic package not installed")
             raise
-    
-    def analyze_code(self, code: str) -> Dict[str, Any]:
+
+    def analyze_code(self, code: str) -> dict[str, Any]:
         """Analyze code using Claude"""
         try:
             response = self.client.messages.create(
@@ -171,9 +174,9 @@ class AnthropicProvider(AIProvider):
                 "tokens_used": response.usage.input_tokens + response.usage.output_tokens
             }
         except Exception as e:
-            logger.error(f"Anthropic analysis error: {str(e)}")
+            logger.error(f"Anthropic analysis error: {e!s}")
             raise
-    
+
     def generate_code(self, prompt: str) -> str:
         """Generate code using Claude"""
         try:
@@ -186,10 +189,10 @@ class AnthropicProvider(AIProvider):
             )
             return response.content[0].text
         except Exception as e:
-            logger.error(f"Anthropic generation error: {str(e)}")
+            logger.error(f"Anthropic generation error: {e!s}")
             raise
-    
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+
+    def chat(self, messages: list[dict[str, str]]) -> str:
         """Chat with Claude"""
         try:
             response = self.client.messages.create(
@@ -199,13 +202,13 @@ class AnthropicProvider(AIProvider):
             )
             return response.content[0].text
         except Exception as e:
-            logger.error(f"Anthropic chat error: {str(e)}")
+            logger.error(f"Anthropic chat error: {e!s}")
             raise
 
 
 class GoogleProvider(AIProvider):
     """Google Generative AI Provider"""
-    
+
     def __init__(self):
         if not _is_key_configured(config.GOOGLE_API_KEY):
             raise ValueError("GOOGLE_API_KEY is not configured. Set a real key in .env (not the 'your_google_key_here' placeholder) and restart the server.")
@@ -216,14 +219,14 @@ class GoogleProvider(AIProvider):
         except ImportError:
             logger.error("Google generativeai package not installed")
             raise
-    
-    def analyze_code(self, code: str) -> Dict[str, Any]:
+
+    def analyze_code(self, code: str) -> dict[str, Any]:
         """Analyze code using Google"""
         try:
             model = self.client.GenerativeModel(config.GOOGLE_MODEL)
             response = model.generate_content(
                 f"Analyze this code:\n\n{code}",
-                generation_config=genai.types.GenerationConfig(temperature=0.7)
+                generation_config=self.client.types.GenerationConfig(temperature=0.7)
             )
             return {
                 "provider": "google",
@@ -231,50 +234,50 @@ class GoogleProvider(AIProvider):
                 "tokens_used": 0  # Google API doesn't provide token count in same way
             }
         except Exception as e:
-            logger.error(f"Google analysis error: {str(e)}")
+            logger.error(f"Google analysis error: {e!s}")
             raise
-    
+
     def generate_code(self, prompt: str) -> str:
         """Generate code using Google"""
         try:
             model = self.client.GenerativeModel(config.GOOGLE_MODEL)
             response = model.generate_content(
                 prompt,
-                generation_config=genai.types.GenerationConfig(temperature=0.7)
+                generation_config=self.client.types.GenerationConfig(temperature=0.7)
             )
             return response.text
         except Exception as e:
-            logger.error(f"Google generation error: {str(e)}")
+            logger.error(f"Google generation error: {e!s}")
             raise
-    
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+
+    def chat(self, messages: list[dict[str, str]]) -> str:
         """Chat with Google"""
         try:
             model = self.client.GenerativeModel(config.GOOGLE_MODEL)
             chat = model.start_chat()
-            
+
             for msg in messages[:-1]:
                 chat.send_message(msg.get("content", ""), stream=False)
-            
+
             response = chat.send_message(
                 messages[-1].get("content", ""),
                 stream=False
             )
             return response.text
         except Exception as e:
-            logger.error(f"Google chat error: {str(e)}")
+            logger.error(f"Google chat error: {e!s}")
             raise
 
 
 class AIServiceFactory:
     """Factory for creating AI service providers"""
-    
-    _providers = {
+
+    _providers: ClassVar[dict[str, type[AIProvider]]] = {
         'openai': OpenAIProvider,
         'anthropic': AnthropicProvider,
         'google': GoogleProvider,
     }
-    
+
     @staticmethod
     def create_provider(provider_name: str = 'openai') -> AIProvider:
         """Create and return an AI provider instance"""
@@ -284,11 +287,11 @@ class AIServiceFactory:
                 raise ValueError(f"Unknown provider: {provider_name}")
             return provider_class()
         except Exception as e:
-            logger.error(f"Failed to create provider {provider_name}: {str(e)}")
+            logger.error(f"Failed to create provider {provider_name}: {e!s}")
             raise
-    
+
     @staticmethod
-    def get_available_providers() -> List[str]:
+    def get_available_providers() -> list[str]:
         """Get list of available providers"""
         return list(AIServiceFactory._providers.keys())
 
@@ -298,7 +301,7 @@ class AIServiceFactory:
 # ENABLE_CACHING is False. Each upstream call is wrapped in _timed_call so
 # we get a single log line per real provider invocation (cache hits skip it).
 @cache_result(key_prefix='analyze_code')
-def analyze_code(code: str, provider: str = 'openai') -> Dict[str, Any]:
+def analyze_code(code: str, provider: str = 'openai') -> dict[str, Any]:
     """Analyze code with specified provider"""
     ai_provider = AIServiceFactory.create_provider(provider)
     return _timed_call(provider, "analyze_code", lambda: ai_provider.analyze_code(code))
@@ -312,7 +315,7 @@ def generate_code(prompt: str, provider: str = 'openai') -> str:
 
 
 @cache_result(key_prefix='chat')
-def chat(messages: List[Dict[str, str]], provider: str = 'openai') -> str:
+def chat(messages: list[dict[str, str]], provider: str = 'openai') -> str:
     """Chat with AI with specified provider"""
     ai_provider = AIServiceFactory.create_provider(provider)
     return _timed_call(provider, "chat", lambda: ai_provider.chat(messages))

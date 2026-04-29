@@ -2,13 +2,13 @@
 API Routes Module - REST endpoints for Codeplex AI
 """
 import logging
-from flask import Blueprint, current_app, request, jsonify
-from app.ai_services import (
-    analyze_code, generate_code, chat as ai_chat,
-    AIServiceFactory
-)
-from app.utils import validate_request, create_response
+
+from flask import Blueprint, request
+
+from app.ai_services import AIServiceFactory, analyze_code, generate_code
+from app.ai_services import chat as ai_chat
 from app.config import config
+from app.utils import create_response
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def list_models():
             'count': len(providers)
         }, 200)
     except Exception as e:
-        logger.error(f"Failed to list models: {str(e)}")
+        logger.error(f"Failed to list models: {e!s}")
         return create_response({'error': str(e)}, 500)
 
 
@@ -82,19 +82,19 @@ def analyze():
 
         code = data.get('code')
         provider = data.get('provider', 'openai')
-        
+
         if not code:
             return create_response({'error': 'Code cannot be empty'}, 400)
-        
+
         # Analyze code
         result = analyze_code(code, provider)
         return create_response(result, 200)
-        
+
     except ValueError as e:
-        logger.warning(f"Validation error in analyze: {str(e)}")
+        logger.warning(f"Validation error in analyze: {e!s}")
         return create_response({'error': str(e)}, 400)
     except Exception as e:
-        logger.error(f"Analysis error: {str(e)}")
+        logger.error(f"Analysis error: {e!s}")
         return create_response({'error': f'Analysis failed: {e}'}, 500)
 
 
@@ -108,10 +108,10 @@ def generate():
 
         prompt = data.get('prompt')
         provider = data.get('provider', 'openai')
-        
+
         if not prompt:
             return create_response({'error': 'Prompt cannot be empty'}, 400)
-        
+
         # Generate code
         generated_code = generate_code(prompt, provider)
         return create_response({
@@ -119,12 +119,12 @@ def generate():
             'prompt': prompt,
             'generated_code': generated_code
         }, 200)
-        
+
     except ValueError as e:
-        logger.warning(f"Validation error in generate: {str(e)}")
+        logger.warning(f"Validation error in generate: {e!s}")
         return create_response({'error': str(e)}, 400)
     except Exception as e:
-        logger.error(f"Generation error: {str(e)}")
+        logger.error(f"Generation error: {e!s}")
         return create_response({'error': f'Code generation failed: {e}'}, 500)
 
 
@@ -152,20 +152,20 @@ Provide:
 2. Optimized version of the code
 3. Explanation of changes
 4. Performance improvements"""
-        
+
         optimized = generate_code(prompt, provider)
-        
+
         return create_response({
             'provider': provider,
             'original_code': code,
             'optimized_code': optimized
         }, 200)
-        
+
     except ValueError as e:
-        logger.warning(f"Validation error in optimize: {str(e)}")
+        logger.warning(f"Validation error in optimize: {e!s}")
         return create_response({'error': str(e)}, 400)
     except Exception as e:
-        logger.error(f"Optimization error: {str(e)}")
+        logger.error(f"Optimization error: {e!s}")
         return create_response({'error': f'Code optimization failed: {e}'}, 500)
 
 
@@ -179,24 +179,24 @@ def chat():
 
         messages = data.get('messages', [])
         provider = data.get('provider', 'openai')
-        
+
         if not messages or not isinstance(messages, list):
             return create_response({'error': 'Messages must be a non-empty list'}, 400)
-        
+
         # Chat with AI
         response = ai_chat(messages, provider)
-        
+
         return create_response({
             'provider': provider,
             'messages': messages,
             'response': response
         }, 200)
-        
+
     except ValueError as e:
-        logger.warning(f"Validation error in chat: {str(e)}")
+        logger.warning(f"Validation error in chat: {e!s}")
         return create_response({'error': str(e)}, 400)
     except Exception as e:
-        logger.error(f"Chat error: {str(e)}")
+        logger.error(f"Chat error: {e!s}")
         return create_response({'error': f'Chat failed: {e}'}, 500)
 
 
@@ -210,10 +210,10 @@ def batch_analyze():
 
         codes = data.get('codes', [])
         provider = data.get('provider', 'openai')
-        
+
         if not codes or not isinstance(codes, list):
             return create_response({'error': 'Codes must be a non-empty list'}, 400)
-        
+
         results = []
         for idx, code in enumerate(codes):
             try:
@@ -229,15 +229,15 @@ def batch_analyze():
                     'status': 'error',
                     'error': str(e)
                 })
-        
+
         return create_response({
             'provider': provider,
             'total': len(codes),
             'results': results
         }, 200)
-        
+
     except Exception as e:
-        logger.error(f"Batch analysis error: {str(e)}")
+        logger.error(f"Batch analysis error: {e!s}")
         return create_response({'error': f'Batch analysis failed: {e}'}, 500)
 
 
@@ -250,6 +250,6 @@ def not_found(error):
 @api_bp.errorhandler(500)
 def internal_error(error):
     """Handle 500 errors"""
-    logger.error(f"Internal server error: {str(error)}")
+    logger.error(f"Internal server error: {error!s}")
     return create_response({'error': 'Internal server error'}, 500)
 

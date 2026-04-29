@@ -2,6 +2,7 @@
 Web UI Blueprint - serves the homepage and interactive playground.
 """
 from flask import Blueprint, render_template_string
+
 from app.config import config
 
 web_bp = Blueprint('web', __name__)

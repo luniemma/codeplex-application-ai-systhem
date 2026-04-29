@@ -9,14 +9,13 @@ total cap ~10s. Only retries on transient errors (network, timeout, 5xx,
 from __future__ import annotations
 
 import logging
-from typing import Callable, Tuple, Type
 
 from tenacity import (
+    before_sleep_log,
     retry,
     retry_if_exception,
     stop_after_attempt,
     wait_exponential,
-    before_sleep_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,12 +45,9 @@ def _is_retryable(exc: BaseException) -> bool:
     msg = str(exc).lower()
     if any(k in name for k in transient_keywords):
         return True
-    if any(k in msg for k in transient_keywords):
-        return True
-
-    # Default: don't retry. Better to surface a clean error than mask bugs
-    # by silently retrying.
-    return False
+    # Default: don't retry on patterns we don't recognise. Better to surface a
+    # clean error than mask bugs by silently retrying.
+    return any(k in msg for k in transient_keywords)
 
 
 def with_retry(

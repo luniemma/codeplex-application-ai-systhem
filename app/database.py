@@ -2,8 +2,10 @@
 Database Module - Database initialization and management
 """
 import logging
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker
+
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -39,7 +41,7 @@ def init_db():
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize database: {str(e)}")
+        logger.error(f"Failed to initialize database: {e!s}")
         raise
 
 
@@ -49,7 +51,7 @@ def drop_db():
         Base.metadata.drop_all(bind=engine)
         logger.info("Database dropped successfully")
     except Exception as e:
-        logger.error(f"Failed to drop database: {str(e)}")
+        logger.error(f"Failed to drop database: {e!s}")
         raise
 
 

@@ -2,8 +2,8 @@
 Data Models for Codeplex AI
 """
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, ClassVar
 
 
 @dataclass
@@ -13,7 +13,7 @@ class AnalysisRequest:
     provider: str = 'openai'
     language: str = 'python'
     timestamp: datetime = field(default_factory=datetime.utcnow)
-    request_id: Optional[str] = None
+    request_id: str | None = None
 
 
 @dataclass
@@ -22,8 +22,8 @@ class AnalysisResult:
     code: str
     provider: str
     analysis: str
-    issues: List[str] = field(default_factory=list)
-    suggestions: List[str] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
     score: float = 0.0
     tokens_used: int = 0
     timestamp: datetime = field(default_factory=datetime.utcnow)
@@ -35,9 +35,9 @@ class GenerationRequest:
     prompt: str
     provider: str = 'openai'
     language: str = 'python'
-    constraints: List[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.utcnow)
-    request_id: Optional[str] = None
+    request_id: str | None = None
 
 
 @dataclass
@@ -62,7 +62,7 @@ class ChatMessage:
 @dataclass
 class ChatRequest:
     """Model for chat request"""
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     provider: str = 'openai'
     temperature: float = 0.7
     timestamp: datetime = field(default_factory=datetime.utcnow)
@@ -71,7 +71,7 @@ class ChatRequest:
 @dataclass
 class ChatResponse:
     """Model for chat response"""
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     response: str
     provider: str
     tokens_used: int = 0
@@ -83,7 +83,7 @@ class APIError:
     """Model for API errors"""
     error: str
     error_code: str
-    details: Optional[str] = None
+    details: str | None = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
 
@@ -92,14 +92,14 @@ class APIResponse:
     """Model for API responses"""
     status: str  # 'success', 'error'
     data: Any = None
-    error: Optional[APIError] = None
+    error: APIError | None = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
 
 class ModelRegistry:
     """Registry for data models"""
-    
-    _models = {
+
+    _models: ClassVar[dict[str, type]] = {
         'AnalysisRequest': AnalysisRequest,
         'AnalysisResult': AnalysisResult,
         'GenerationRequest': GenerationRequest,
@@ -110,12 +110,12 @@ class ModelRegistry:
         'APIError': APIError,
         'APIResponse': APIResponse,
     }
-    
+
     @staticmethod
     def get_model(model_name: str):
         """Get model by name"""
         return ModelRegistry._models.get(model_name)
-    
+
     @staticmethod
     def get_all_models():
         """Get all registered models"""

@@ -1,0 +1,83 @@
+# Project tooling config — ruff (linter + formatter), pytest, coverage.
+# Why pyproject.toml and not setup.cfg / separate ruff.toml: this is the
+# canonical Python project metadata file (PEP 621), and tools that respect it
+# get one place to look. We don't ship as a wheel, so [project] is omitted.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "venv",
+    ".venv",
+    "build",
+    "dist",
+    "*.egg-info",
+    "logs",
+    "output",
+]
+
+[tool.ruff.lint]
+# Curated rule set: pyflakes (F), pycodestyle errors (E), isort (I),
+# bugbear (B), comprehensions (C4), simplify (SIM), security (S),
+# bandit-like checks. Avoid being a maximalist — false positives are worse
+# than missed lints because they breed `# noqa` cargo culting.
+select = [
+    "F",     # pyflakes
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "UP",    # pyupgrade
+    "RUF",   # ruff-specific
+]
+ignore = [
+    # Allow long strings in error messages and HTML templates.
+    "E501",
+    # Don't require type annotations on every function — the codebase
+    # is partially typed and we'd rather grow into mypy than blanket-fix.
+    # (Not in 'select' anyway, listed for clarity.)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",  # assertions are the whole point of tests
+    "ARG",   # pytest fixtures show up as unused args
+]
+"app/web.py" = [
+    # The HTML template is one big r-string — line length checks would force
+    # ugly continuation with no readability gain.
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+filterwarnings = [
+    # Silence the deprecation noise from older SDK deps that we can't bump
+    # without a coordinated dependency upgrade.
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "tests/*",
+    "venv/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

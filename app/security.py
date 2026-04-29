@@ -13,7 +13,6 @@ Rate limiting uses Flask-Limiter with two backends:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from flask import Flask, Response, request
 
@@ -67,7 +66,7 @@ def install_security_headers(app: Flask) -> None:
         return response
 
 
-def install_rate_limiter(app: Flask, redis_url: Optional[str] = None):
+def install_rate_limiter(app: Flask, redis_url: str | None = None):
     """Configure Flask-Limiter with Redis when reachable, in-memory otherwise.
 
     Returns the Limiter instance so callers (routes) can apply per-route
@@ -90,7 +89,7 @@ def install_rate_limiter(app: Flask, redis_url: Optional[str] = None):
             client.ping()
             storage_uri = redis_url
             backend = "redis"
-        except Exception as exc:  # noqa: BLE001 — log and keep going
+        except Exception as exc:
             logger.warning(
                 "rate_limiter: Redis unreachable (%s) — falling back to in-memory storage. "
                 "Limits will not be shared across workers.",

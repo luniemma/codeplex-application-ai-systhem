@@ -1,14 +1,14 @@
 """
 Codeplex AI - Main Application Entry Point
 """
+import logging
 import os
 import time
 import uuid
-import logging
 
+from dotenv import load_dotenv
 from flask import Flask, g, request
 from flask_cors import CORS
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -24,8 +24,8 @@ def _is_key_set(value: str) -> bool:
 def _log_startup_banner() -> None:
     """Emit a one-time summary of effective config so an operator can see at
     a glance which providers, cache, and DB are wired in."""
-    from app.config import config
     from app.cache import cache_client
+    from app.config import config
 
     providers = {
         "openai": _is_key_set(config.OPENAI_API_KEY),
@@ -98,8 +98,8 @@ def _install_request_logging(app: Flask) -> None:
     # Unhandled exceptions: Flask's `got_request_exception` signal lets us
     # log without intercepting the response. Skip HTTPException (404, 400,
     # etc.) — those are part of the normal flow, not "unhandled".
-    from werkzeug.exceptions import HTTPException
     from flask.signals import got_request_exception
+    from werkzeug.exceptions import HTTPException
 
     def _on_unhandled(sender, exception, **_):
         if isinstance(exception, HTTPException):
@@ -151,7 +151,7 @@ def create_app():
     _install_request_logging(app)
 
     # Production security hardening — headers + rate limits.
-    from app.security import install_security_headers, install_rate_limiter
+    from app.security import install_rate_limiter, install_security_headers
     install_security_headers(app)
     limiter = install_rate_limiter(app, redis_url=os.getenv("REDIS_URL"))
     app.extensions["limiter"] = limiter  # exposed for per-route limits in routes.py

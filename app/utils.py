@@ -3,15 +3,16 @@ Utilities Module - Helper functions for Codeplex AI
 """
 import json
 import logging
-from typing import Dict, Any, Tuple
 from datetime import datetime
 from functools import wraps
+from typing import Any
+
 from flask import jsonify, request
 
 logger = logging.getLogger(__name__)
 
 
-def create_response(data: Dict[str, Any], status_code: int) -> Tuple:
+def create_response(data: dict[str, Any], status_code: int) -> tuple:
     """Create a standardized JSON response"""
     response = {
         'timestamp': datetime.utcnow().isoformat(),
@@ -28,14 +29,14 @@ def validate_request(required_fields: list):
         def decorated_function(*args, **kwargs):
             if not request.json:
                 return create_response({'error': 'Request must be JSON'}, 400)
-            
+
             for field in required_fields:
                 if field not in request.json:
                     return create_response(
-                        {'error': f'Missing required field: {field}'}, 
+                        {'error': f'Missing required field: {field}'},
                         400
                     )
-            
+
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -87,10 +88,10 @@ def handle_errors(f):
         try:
             return f(*args, **kwargs)
         except ValueError as e:
-            logger.warning(f"Validation error: {str(e)}")
+            logger.warning(f"Validation error: {e!s}")
             return create_response({'error': str(e)}, 400)
         except Exception as e:
-            logger.error(f"Error: {str(e)}")
+            logger.error(f"Error: {e!s}")
             return create_response({'error': 'Internal server error'}, 500)
     return decorated_function
 
@@ -99,10 +100,10 @@ def sanitize_input(text: str, max_length: int = 100000) -> str:
     """Sanitize user input"""
     if not isinstance(text, str):
         raise ValueError("Input must be a string")
-    
+
     if len(text) > max_length:
         raise ValueError(f"Input exceeds maximum length of {max_length}")
-    
+
     return text.strip()
 
 
@@ -147,23 +148,23 @@ def measure_performance(f):
 
 class CodeAnalysisResult:
     """Result object for code analysis"""
-    
+
     def __init__(self, code: str, provider: str):
         self.code = code
         self.provider = provider
         self.issues = []
         self.suggestions = []
         self.score = 0
-    
+
     def add_issue(self, issue: str, severity: str = 'medium'):
         """Add an issue"""
         self.issues.append({'issue': issue, 'severity': severity})
-    
+
     def add_suggestion(self, suggestion: str, priority: str = 'medium'):
         """Add a suggestion"""
         self.suggestions.append({'suggestion': suggestion, 'priority': priority})
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary"""
         return {
             'provider': self.provider,
@@ -176,18 +177,18 @@ class CodeAnalysisResult:
 
 class CodeGenerationRequest:
     """Request object for code generation"""
-    
+
     def __init__(self, prompt: str, language: str = 'python', provider: str = 'openai'):
         self.prompt = prompt
         self.language = language
         self.provider = provider
         self.constraints = []
-    
+
     def add_constraint(self, constraint: str):
         """Add a constraint"""
         self.constraints.append(constraint)
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary"""
         return {
             'prompt': self.prompt,

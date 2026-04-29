@@ -1,0 +1,54 @@
+# Dependabot — automated dependency PRs.
+# Reduces the window between a CVE being published and our app picking it up.
+
+version: 2
+updates:
+  # Python dependencies in requirements.txt
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # Group security and patch updates together so we don't get spammed.
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      python-patch:
+        applies-to: version-updates
+        update-types: [patch]
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+
+  # GitHub Actions used by our workflows
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(actions)"
+      include: scope
+
+  # Docker base images
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "chore(docker)"
+      include: scope

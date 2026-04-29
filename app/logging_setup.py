@@ -15,22 +15,24 @@ import logging
 import os
 import sys
 import time
-from typing import Optional
+from typing import ClassVar
 
 try:
     from flask import g, has_request_context
 except ImportError:  # pragma: no cover — flask is a hard dep, but keep import safe
     g = None  # type: ignore
-    has_request_context = lambda: False  # type: ignore
+
+    def has_request_context() -> bool:  # type: ignore[no-redef]
+        return False
 
 
-def _get_request_id() -> Optional[str]:
+def _get_request_id() -> str | None:
     if has_request_context():
         return getattr(g, "request_id", None)
     return None
 
 
-def _get_provider() -> Optional[str]:
+def _get_provider() -> str | None:
     if has_request_context():
         return getattr(g, "ai_provider", None)
     return None
@@ -61,7 +63,7 @@ class JsonFormatter(logging.Formatter):
     """One JSON object per line — for log aggregators."""
 
     # Standard LogRecord attributes we don't want to copy verbatim.
-    _RESERVED = {
+    _RESERVED: ClassVar[set[str]] = {
         "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
         "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
         "created", "msecs", "relativeCreated", "thread", "threadName",

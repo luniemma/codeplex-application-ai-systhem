@@ -40,7 +40,9 @@ jobs:
     uses: ./.github/workflows/build-docker.yml
     permissions:
       contents: read
-      packages: write
+      packages: write          # GHCR push
+      id-token: write          # cosign keyless signing via Sigstore OIDC
+      security-events: write   # Trivy SARIF upload to Code Scanning
     with:
       # Push when pushing to master/main, or on manual dispatch with push=true.
       # Otherwise just build + smoke test (PRs, doc changes, etc.).

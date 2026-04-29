@@ -1,7 +1,14 @@
-# Reusable workflow: builds the Codeplex AI Docker image, smoke-tests it
-# (boots the container and verifies /health returns 200 with the expected
-# envelope shape), and optionally publishes the image to GHCR, Docker Hub,
-# or both.
+# Reusable workflow: builds the Codeplex AI Docker image, smoke-tests it,
+# scans for CVEs, signs it (keyless via Sigstore), and optionally publishes
+# multi-arch (amd64 + arm64) images to GHCR, Docker Hub, or both.
+#
+# Pipeline (all stages gated on the previous one):
+#   1. Build amd64 image, load into local Docker daemon
+#   2. Smoke test — boot container, verify /health returns the healthy envelope
+#   3. Trivy scan — fail on CRITICAL CVEs in the OS or app layers
+#   4. Multi-arch rebuild + push to enabled registries (cache makes amd64 ~free)
+#   5. Cosign keyless sign (Sigstore OIDC; no key management)
+#   6. Workflow summary with image refs and digests
 #
 # Call from another workflow with:
 #
@@ -10,17 +17,14 @@
 #       uses: ./.github/workflows/build-docker.yml
 #       permissions:
 #         contents: read
-#         packages: write   # only needed when push_to_ghcr=true
+#         packages: write   # GHCR push
+#         id-token: write   # cosign keyless signing
+#         security-events: write  # Trivy SARIF upload
 #       with:
 #         push_to_ghcr: true
 #         push_to_dockerhub: true
 #         dockerhub_image: "luniemma/codeplex-ai"
-#       secrets: inherit    # so DOCKERHUB_USERNAME/DOCKERHUB_TOKEN reach this workflow
-#
-# Required repo secrets when push_to_dockerhub is true:
-#   DOCKERHUB_USERNAME — your Docker Hub login
-#   DOCKERHUB_TOKEN    — Docker Hub access token (NOT your password)
-#                        Create at https://hub.docker.com/settings/security
+#       secrets: inherit
 
 name: Build Docker image
 
@@ -52,37 +56,40 @@ on:
         type: string
         required: false
         default: ""
+      platforms:
+        description: "Comma-separated build targets. Push step always uses both; smoke test always uses amd64."
+        type: string
+        required: false
+        default: "linux/amd64,linux/arm64"
+      cve_severity:
+        description: "Trivy CVE severities that should fail the build."
+        type: string
+        required: false
+        default: "CRITICAL"
     secrets:
       DOCKERHUB_USERNAME:
         required: false
       DOCKERHUB_TOKEN:
         required: false
     outputs:
-      ghcr_image:
-        description: "GHCR image reference (registry/owner/repo:tag) — empty when not pushed."
-        value: ${{ jobs.build.outputs.ghcr_image }}
-      dockerhub_image:
-        description: "Docker Hub image reference (user/repo:tag) — empty when not pushed."
-        value: ${{ jobs.build.outputs.dockerhub_image }}
       digest:
-        description: "Image digest (sha256:...)."
+        description: "Image digest (sha256:...) of the published manifest list."
         value: ${{ jobs.build.outputs.digest }}
 
-# Same Node 24 opt-in as the other workflows — see ARCHITECTURE.md.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:
-    name: Build & smoke test
+    name: Build, scan, sign, publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write   # for GHCR push when enabled
+      packages: write          # GHCR
+      id-token: write          # Cosign keyless signing via Sigstore OIDC
+      security-events: write   # Trivy SARIF upload to Code Scanning
     outputs:
-      ghcr_image: ${{ steps.meta.outputs.ghcr_image }}
-      dockerhub_image: ${{ steps.meta.outputs.dockerhub_image }}
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.publish.outputs.digest }}
 
     steps:
       - name: Validate inputs
@@ -98,8 +105,7 @@ jobs:
       - name: Compute image references
         id: meta
         run: |
-          # GHCR requires the repo path to be all-lowercase. Don't trust the
-          # caller to provide it that way.
+          # GHCR rejects mixed-case repo paths; force lowercase.
           repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
           ghcr_base="ghcr.io/${repo_lower}"
@@ -115,19 +121,19 @@ jobs:
             dh_sha=""
           fi
 
-          # The "smoke" tag is what the local container is run under; we use
-          # the GHCR tag because it's always present.
-          smoke_tag="$ghcr_tag"
-
           {
             echo "ghcr_tag=${ghcr_tag}"
             echo "ghcr_sha=${ghcr_sha}"
             echo "dh_tag=${dh_tag}"
             echo "dh_sha=${dh_sha}"
-            echo "smoke_tag=${smoke_tag}"
-            echo "ghcr_image=$([ '${{ inputs.push_to_ghcr }}' = 'true' ] && echo $ghcr_tag || echo '')"
-            echo "dockerhub_image=$([ '${{ inputs.push_to_dockerhub }}' = 'true' ] && echo $dh_tag || echo '')"
+            # Smoke test image is always tagged with the GHCR ref (cache key).
+            echo "smoke_tag=${ghcr_tag}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -144,58 +150,36 @@ jobs:
         if: ${{ inputs.push_to_dockerhub }}
         uses: docker/login-action@v3
         with:
-          # No registry argument → defaults to docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Compute the full set of tags to attach at build time. Include both
-      # registries so docker push later finds matching local refs without us
-      # having to docker tag manually.
-      - name: Compose tag list
-        id: tags
-        run: |
-          tags=""
-          tags="${tags}${{ steps.meta.outputs.ghcr_tag }}"$'\n'
-          tags="${tags}${{ steps.meta.outputs.ghcr_sha }}"$'\n'
-          if [ '${{ inputs.push_to_dockerhub }}' = 'true' ]; then
-            tags="${tags}${{ steps.meta.outputs.dh_tag }}"$'\n'
-            tags="${tags}${{ steps.meta.outputs.dh_sha }}"$'\n'
-          fi
-          {
-            echo "tags<<__EOT__"
-            echo "${tags}"
-            echo "__EOT__"
-          } >> "$GITHUB_OUTPUT"
-
-      # Build with load=true so the image goes into the local Docker daemon
-      # for the smoke test below. We push separately after the test passes —
-      # never publish an image that hasn't booted at least once.
-      - name: Build image (load into local daemon)
-        id: build
+      # ── Stage 1: build amd64 only, load to local daemon for smoke test ──
+      # Multi-arch builds can't be `load`ed; they must be pushed. So we do
+      # the smoke test on amd64 first, then rebuild multi-arch on success.
+      - name: Build amd64 image for smoke test
+        id: build_amd64
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ inputs.dockerfile }}
-          tags: ${{ steps.tags.outputs.tags }}
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.smoke_tag }}
           push: false
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Inject build labels so anyone inspecting the image can trace it
-          # back to a commit and a workflow run.
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
 
-      - name: Smoke test — boot container, hit /health
+      - name: Smoke test — boot container, hit /livez
         run: |
           set -euo pipefail
 
           IMAGE="${{ steps.meta.outputs.smoke_tag }}"
           echo "Booting $IMAGE..."
 
-          # No real API keys needed — /health doesn't call upstream providers.
           docker run -d \
             --name codeplex-smoke \
             -p 8000:8000 \
@@ -203,27 +187,24 @@ jobs:
             -e DEBUG=False \
             "$IMAGE"
 
-          echo "Waiting up to 60s for /health to respond..."
+          echo "Waiting up to 60s for /livez to respond..."
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/health -o /tmp/health.json 2>/dev/null; then
-              echo "/health responded after ${i} attempts."
+            if curl -fsS http://127.0.0.1:8000/livez -o /tmp/health.json 2>/dev/null; then
               cat /tmp/health.json
               echo
               status=$(jq -r '.data.status // empty' /tmp/health.json)
               if [ "$status" != "healthy" ]; then
-                echo "::error::Unexpected /health body — expected data.status='healthy'"
+                echo "::error::Unexpected /livez body — expected data.status='healthy'"
                 exit 1
               fi
-              echo "Smoke test passed: /health returned 200 with healthy status."
+              echo "Smoke test passed."
               exit 0
             fi
             sleep 2
           done
 
           echo "::error::Container did not become healthy within 60s."
-          echo "--- docker ps ---"
           docker ps -a
-          echo "--- container logs ---"
           docker logs codeplex-smoke || true
           exit 1
 
@@ -231,42 +212,121 @@ jobs:
         if: always()
         run: docker rm -f codeplex-smoke 2>/dev/null || true
 
-      # Push only after the smoke test passes — `success()` ensures we don't
-      # publish an image that didn't boot.
-      - name: Push to GHCR
-        if: ${{ inputs.push_to_ghcr && success() }}
+      # ── Stage 2: scan the smoke-tested amd64 image for CVEs ──
+      - name: Trivy CVE scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.meta.outputs.smoke_tag }}
+          severity: ${{ inputs.cve_severity }}
+          exit-code: "1"
+          ignore-unfixed: true   # don't fail on CVEs with no fix available
+          format: sarif
+          output: trivy-results.sarif
+
+      - name: Upload Trivy SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-image
+
+      # ── Stage 3: push multi-arch images. Cache makes amd64 essentially free; only arm64 builds fresh ──
+      - name: Compose multi-arch tag list
+        id: tags
+        run: |
+          tags="${{ steps.meta.outputs.ghcr_tag }}"$'\n'"${{ steps.meta.outputs.ghcr_sha }}"
+          if [ '${{ inputs.push_to_dockerhub }}' = 'true' ]; then
+            tags="${tags}"$'\n'"${{ steps.meta.outputs.dh_tag }}"$'\n'"${{ steps.meta.outputs.dh_sha }}"
+          fi
+          {
+            echo "tags<<__EOT__"
+            echo "${tags}"
+            echo "__EOT__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build & push multi-arch
+        id: publish
+        if: ${{ (inputs.push_to_ghcr || inputs.push_to_dockerhub) && success() }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          tags: ${{ steps.tags.outputs.tags }}
+          push: true
+          # provenance=true emits SLSA provenance attestation; sbom=true
+          # generates an SPDX SBOM. Both end up as OCI artifacts attached
+          # to the manifest, viewable via `docker buildx imagetools inspect`.
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+
+      # ── Stage 4: keyless sign with Sigstore. No keys to manage; cosign
+      # gets a short-lived certificate from Fulcio using the runner's OIDC
+      # token. Verifiers check the certificate's identity claims to confirm
+      # the image came from this repo + workflow. ──
+      - name: Install cosign
+        if: ${{ steps.publish.outcome == 'success' }}
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Sign images (Sigstore keyless)
+        if: ${{ steps.publish.outcome == 'success' }}
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          DIGEST: ${{ steps.publish.outputs.digest }}
         run: |
           set -e
-          docker push "${{ steps.meta.outputs.ghcr_tag }}"
-          docker push "${{ steps.meta.outputs.ghcr_sha }}"
+          # Sign every fully-qualified ref by digest — signing by tag is
+          # vulnerable to tag mutation between sign and verify.
+          for ref in \
+              "${{ steps.meta.outputs.ghcr_tag }}" \
+              "${{ steps.meta.outputs.ghcr_sha }}" \
+              $([ '${{ inputs.push_to_dockerhub }}' = 'true' ] && echo "${{ steps.meta.outputs.dh_tag }}") \
+              $([ '${{ inputs.push_to_dockerhub }}' = 'true' ] && echo "${{ steps.meta.outputs.dh_sha }}") ; do
+            base="${ref%:*}"
+            cosign sign --yes "${base}@${DIGEST}"
+          done
 
-      - name: Push to Docker Hub
-        if: ${{ inputs.push_to_dockerhub && success() }}
-        run: |
-          set -e
-          docker push "${{ steps.meta.outputs.dh_tag }}"
-          docker push "${{ steps.meta.outputs.dh_sha }}"
-
+      # ── Stage 5: workflow summary ──
       - name: Summarize
         if: always()
         run: |
           {
             echo "## Docker build summary"
             echo
-            echo "| Field | Value |"
+            echo "| Stage | Status |"
             echo "|---|---|"
-            echo "| Dockerfile | \`${{ inputs.dockerfile }}\` |"
+            echo "| Build amd64 | \`${{ steps.build_amd64.outcome }}\` |"
             echo "| Smoke test | \`${{ job.status }}\` |"
+            echo "| Trivy CVE scan (\`${{ inputs.cve_severity }}\`) | scanned, see Code scanning |"
+            echo "| Multi-arch publish | \`${{ steps.publish.outcome }}\` |"
+            echo "| Cosign signing | $([ '${{ steps.publish.outcome }}' = 'success' ] && echo 'done' || echo 'skipped') |"
+            echo
+            echo "| Image | Tag |"
+            echo "|---|---|"
             if [ '${{ inputs.push_to_ghcr }}' = 'true' ]; then
-              echo "| GHCR image | \`${{ steps.meta.outputs.ghcr_tag }}\` |"
-              echo "| GHCR SHA tag | \`${{ steps.meta.outputs.ghcr_sha }}\` |"
-            else
-              echo "| GHCR | _skipped_ |"
+              echo "| GHCR | \`${{ steps.meta.outputs.ghcr_tag }}\` |"
+              echo "| GHCR (immutable) | \`${{ steps.meta.outputs.ghcr_sha }}\` |"
             fi
             if [ '${{ inputs.push_to_dockerhub }}' = 'true' ]; then
-              echo "| Docker Hub image | \`${{ steps.meta.outputs.dh_tag }}\` |"
-              echo "| Docker Hub SHA tag | \`${{ steps.meta.outputs.dh_sha }}\` |"
-            else
-              echo "| Docker Hub | _skipped_ |"
+              echo "| Docker Hub | \`${{ steps.meta.outputs.dh_tag }}\` |"
+              echo "| Docker Hub (immutable) | \`${{ steps.meta.outputs.dh_sha }}\` |"
+            fi
+            if [ -n "${{ steps.publish.outputs.digest }}" ]; then
+              echo
+              echo "**Digest:** \`${{ steps.publish.outputs.digest }}\`"
+              echo
+              echo "Verify the signature with cosign:"
+              echo
+              echo "\`\`\`bash"
+              echo "cosign verify ${{ steps.meta.outputs.ghcr_tag }} \\"
+              echo "  --certificate-identity-regexp 'https://github.com/${{ github.repository }}' \\"
+              echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+              echo "\`\`\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
