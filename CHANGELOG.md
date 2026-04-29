@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Removed
+- `.github/workflows/generator-generic-ossf-slsa3-publish.yml` — the standalone SLSA generic-generator workflow GitHub scaffolded via the UI. It was failing with `Input required and not supplied: path` and was redundant with the OCI-native SLSA provenance our Docker workflow already emits via `docker/build-push-action@v6` (`provenance: true`, `sbom: true`). The generic generator is for binary releases (Go, JARs); for container images, OCI-native attestations attached to the manifest are the recommended pattern.
+
 ### Added
 - **Multi-arch Docker images** (linux/amd64 + linux/arm64) for ARM Macs and AWS Graviton.
 - **Sigstore keyless signing** of every published image — verify identity with `cosign verify`.
