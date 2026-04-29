@@ -1,0 +1,24 @@
+# GitHub CODEOWNERS — auto-requests review from the listed owners on every PR.
+# Format: <path-pattern> <@user-or-team> [<@user-or-team>...]
+# Reference: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-customization/customizing-your-repository/about-code-owners
+
+# Default owner — every file unless overridden below.
+*                              @luniemma
+
+# Application code — the maintainer.
+/main.py                       @luniemma
+/app/                          @luniemma
+
+# Container & deploy surface — high-blast-radius changes get extra eyes.
+/Dockerfile*                   @luniemma
+/docker-compose*.yml           @luniemma
+/nginx.conf                    @luniemma
+/gunicorn_config.py            @luniemma
+
+# CI / supply chain — security-relevant changes.
+/.github/workflows/            @luniemma
+/.github/dependabot.yml        @luniemma
+/.github/CODEOWNERS            @luniemma
+
+# Security policy — never merge without an owner review.
+/SECURITY.md                   @luniemma

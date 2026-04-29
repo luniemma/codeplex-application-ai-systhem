@@ -538,6 +538,8 @@ If you need any of these wired up for production, open an issue or PR.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — design decisions, layer breakdown, and the *why* behind non-obvious code (provider abstraction, cache fallback, placeholder key detection, etc.)
 - [DEPLOYMENT.md](DEPLOYMENT.md) — pre-deploy checklist and deployment strategies (Docker, compose, gunicorn+nginx)
+- [SECURITY.md](SECURITY.md) — vulnerability disclosure policy + what's already hardened in published images
+- [CHANGELOG.md](CHANGELOG.md) — notable changes per release
 
 ## License
 
