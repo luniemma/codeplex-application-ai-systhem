@@ -158,7 +158,7 @@ jobs:
       # the smoke test on amd64 first, then rebuild multi-arch on success.
       - name: Build amd64 image for smoke test
         id: build_amd64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ inputs.dockerfile }}
@@ -247,7 +247,7 @@ jobs:
       - name: Build & push multi-arch
         id: publish
         if: ${{ (inputs.push_to_ghcr || inputs.push_to_dockerhub) && success() }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ inputs.dockerfile }}
