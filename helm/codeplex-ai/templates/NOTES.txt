@@ -1,0 +1,66 @@
+{{- $fullName := include "codeplex-ai.fullname" . -}}
+✓ Codeplex AI {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Reach the service:
+{{- if .Values.ingress.enabled }}
+  Ingress hosts:
+  {{- range .Values.ingress.hosts }}
+    - http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}/
+  {{- end }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  Once the LoadBalancer is provisioned:
+    kubectl -n {{ .Release.Namespace }} get svc {{ $fullName }} -w
+
+  Then open: http://<EXTERNAL-IP>:{{ .Values.service.port }}/
+{{- else }}
+  Port-forward to the cluster:
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullName }} 8000:{{ .Values.service.port }}
+
+  Then open: http://localhost:8000/
+{{- end }}
+
+Verify the rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ $fullName }}
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Smoke-test from inside the cluster:
+  kubectl -n {{ .Release.Namespace }} run -it --rm curlpod --image=curlimages/curl --restart=Never -- \
+    curl -fsSL http://{{ $fullName }}:{{ .Values.service.port }}/health
+
+{{- if not .Values.secrets.existingSecret }}
+{{- $hasKey := false -}}
+{{- range $k, $v := .Values.secrets.values -}}
+  {{- if and (or (eq $k "OPENAI_API_KEY") (eq $k "ANTHROPIC_API_KEY") (eq $k "GOOGLE_API_KEY")) $v -}}
+    {{- $hasKey = true -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $hasKey }}
+
+⚠ No provider API keys are set. /readyz will return 503 until you configure
+   at least one of OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.
+
+   Either edit secrets.values and `helm upgrade`, or:
+     kubectl -n {{ .Release.Namespace }} create secret generic {{ $fullName }}-keys \
+       --from-literal=GOOGLE_API_KEY=...
+     helm upgrade {{ .Release.Name }} ... \
+       --set secrets.create=false --set secrets.existingSecret={{ $fullName }}-keys
+{{- end }}
+{{- end }}
+
+Observability:
+{{- if .Values.serviceMonitor.enabled }}
+  ServiceMonitor created — kube-prometheus-stack will scrape /metrics on port http.
+  Verify the target appears in Prometheus → Status → Targets.
+{{- else }}
+  ServiceMonitor disabled. The pod is annotated with prometheus.io/scrape so
+  static-config Prometheus instances pick it up automatically. To use the
+  prometheus-operator path, set serviceMonitor.enabled=true and re-upgrade.
+{{- end }}
+{{- if .Values.grafanaDashboard.enabled }}
+  Grafana dashboard ConfigMap deployed. The kube-prometheus-stack Grafana
+  sidecar should auto-import it within ~30s. Open Grafana → Dashboards →
+  "{{ .Values.grafanaDashboard.folder }}" → "Codeplex AI".
+{{- else }}
+  Grafana dashboard ConfigMap disabled. Enable it with --set grafanaDashboard.enabled=true
+  if you're running kube-prometheus-stack with the dashboard sidecar.
+{{- end }}

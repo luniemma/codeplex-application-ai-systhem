@@ -1,0 +1,22 @@
+apiVersion: v2
+name: codeplex-ai
+description: Flask service fronting OpenAI / Anthropic / Google Gemini behind a single REST API, with Prometheus metrics and a ready-to-import Grafana dashboard.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - ai
+  - flask
+  - openai
+  - anthropic
+  - gemini
+  - prometheus
+home: https://github.com/luniemma/codeplex-application-ai-systhem
+sources:
+  - https://github.com/luniemma/codeplex-application-ai-systhem
+maintainers:
+  - name: luniemma
+    url: https://github.com/luniemma
+annotations:
+  category: AI

@@ -498,6 +498,52 @@ The workflow uses these secrets only when pushing on `master`. PRs build and smo
 docker-compose up
 ```
 
+---
+
+## Kubernetes
+
+Two equivalent deployment paths — pick whichever fits your cluster:
+
+### Raw manifests ([`k8s/`](k8s/README.md))
+
+`kubectl apply -f k8s/` brings up the app, Redis, **and** a self-contained Prometheus + Grafana stack — no operator, no Helm, just `kubectl`. Manifests are numbered so lexical ordering matches apply ordering.
+
+```bash
+cp k8s/11-secret.example.yaml k8s/11-secret.yaml      # fill in real API keys
+kubectl apply -f k8s/
+kubectl -n codeplex-ai port-forward svc/grafana 3000:3000   # admin / admin
+```
+
+The bundled Grafana auto-imports a "Codeplex AI" dashboard with request rate, latency percentiles, error rate, top routes, and per-pod resource usage.
+
+### Helm chart ([`helm/codeplex-ai/`](helm/codeplex-ai/README.md))
+
+Standard Helm chart for the app, designed to integrate with [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) — emits a `ServiceMonitor` and a Grafana dashboard `ConfigMap` with the `grafana_dashboard: "1"` label that the Grafana sidecar auto-discovers.
+
+```bash
+helm install codeplex-ai ./helm/codeplex-ai \
+  --namespace codeplex-ai --create-namespace \
+  --set secrets.values.GOOGLE_API_KEY=AIza... \
+  --set serviceMonitor.enabled=true \
+  --set serviceMonitor.labels.release=monitoring \
+  --set grafanaDashboard.enabled=true
+```
+
+The chart's `values.yaml` documents every knob: replicas, autoscaling thresholds, resource limits, ingress, ServiceMonitor labels, etc. For full options see [helm/codeplex-ai/README.md](helm/codeplex-ai/README.md).
+
+### What gets exported to Prometheus
+
+The app mounts `/metrics` via [`app/metrics.py`](app/metrics.py) (auto-instruments every route through `prometheus-flask-exporter`). Useful series:
+
+| Metric                                         | What it counts                                                |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| `flask_http_request_total{method,status,path}` | HTTP request count (used for rate, error rate, top routes)    |
+| `flask_http_request_duration_seconds_bucket`   | Histogram for p50/p95/p99 latency                              |
+| `flask_http_request_exceptions_total`          | Unhandled exceptions per route                                |
+| `process_resident_memory_bytes`                | Per-pod RSS                                                    |
+| `process_cpu_seconds_total`                    | Per-pod CPU                                                    |
+| `codeplex_ai_build_info{version=...}`          | Build/version label for dashboards                            |
+
 The compose file in [docker-compose.yml](docker-compose.yml) wires up the optional Redis cache and Postgres database. For dev with auto-reload, use [docker-compose.dev.yml](docker-compose.dev.yml).
 
 For production behind nginx, see [nginx.conf](nginx.conf) — proxies `/api/*` to the gunicorn workers configured in [gunicorn_config.py](gunicorn_config.py).

@@ -97,3 +97,10 @@ build/
 .env.staging
 config.local.yaml
 
+# Kubernetes / Helm — keep examples and templates in git, exclude any
+# populated secret manifests or per-environment value overlays that may
+# contain real API keys.
+k8s/11-secret.yaml
+helm/codeplex-ai/values-*.yaml
+!helm/codeplex-ai/values.yaml
+
