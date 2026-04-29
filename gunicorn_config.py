@@ -57,3 +57,13 @@ def worker_int(worker):
 def worker_abort(worker):
     """Called when a worker is aborted"""
     print(f"Worker {worker.pid} has been aborted")
+
+
+def child_exit(server, worker):
+    """Called by master in the parent process when a worker exits.
+    Cleans up the worker's per-process metrics files so Prometheus
+    multiprocess aggregation doesn't include stale data."""
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        from prometheus_client import multiprocess
+
+        multiprocess.mark_process_dead(worker.pid)

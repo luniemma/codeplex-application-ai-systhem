@@ -168,6 +168,17 @@ def create_app():
     limiter = install_rate_limiter(app, redis_url=os.getenv("REDIS_URL"))
     app.extensions["limiter"] = limiter  # exposed for per-route limits in routes.py
 
+    # Mount /metrics for Prometheus. Done before blueprint registration so the
+    # exporter wraps every route's request handling — including the AI endpoints.
+    # Soft-import so a missing optional dep doesn't kill the app for local devs
+    # who haven't pip-installed yet; in containers requirements.txt is enforced.
+    try:
+        from app.metrics import install_metrics
+
+        install_metrics(app, version=os.getenv("APP_VERSION", "1.0.0"))
+    except ImportError as e:
+        logger.warning("prometheus-flask-exporter not installed — /metrics disabled (%s)", e)
+
     from app.routes import api_bp, health_bp
     from app.web import web_bp
 
