@@ -10,6 +10,7 @@ Rate limiting uses Flask-Limiter with two backends:
 - Redis when REDIS_URL is reachable (shared limits across workers)
 - in-memory otherwise (per-worker; fine for dev and single-worker prod)
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,7 +51,9 @@ def install_security_headers(app: Flask) -> None:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        response.headers.setdefault(
+            "Permissions-Policy", "geolocation=(), microphone=(), camera=()"
+        )
         response.headers.setdefault("Content-Security-Policy", csp)
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")

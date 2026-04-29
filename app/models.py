@@ -1,6 +1,7 @@
 """
 Data Models for Codeplex AI
 """
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, ClassVar
@@ -9,9 +10,10 @@ from typing import Any, ClassVar
 @dataclass
 class AnalysisRequest:
     """Model for code analysis request"""
+
     code: str
-    provider: str = 'openai'
-    language: str = 'python'
+    provider: str = "openai"
+    language: str = "python"
     timestamp: datetime = field(default_factory=datetime.utcnow)
     request_id: str | None = None
 
@@ -19,6 +21,7 @@ class AnalysisRequest:
 @dataclass
 class AnalysisResult:
     """Model for code analysis result"""
+
     code: str
     provider: str
     analysis: str
@@ -32,9 +35,10 @@ class AnalysisResult:
 @dataclass
 class GenerationRequest:
     """Model for code generation request"""
+
     prompt: str
-    provider: str = 'openai'
-    language: str = 'python'
+    provider: str = "openai"
+    language: str = "python"
     constraints: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.utcnow)
     request_id: str | None = None
@@ -43,10 +47,11 @@ class GenerationRequest:
 @dataclass
 class GenerationResult:
     """Model for code generation result"""
+
     prompt: str
     provider: str
     generated_code: str
-    language: str = 'python'
+    language: str = "python"
     tokens_used: int = 0
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
@@ -54,6 +59,7 @@ class GenerationResult:
 @dataclass
 class ChatMessage:
     """Model for chat message"""
+
     role: str  # 'user', 'assistant', 'system'
     content: str
     timestamp: datetime = field(default_factory=datetime.utcnow)
@@ -62,8 +68,9 @@ class ChatMessage:
 @dataclass
 class ChatRequest:
     """Model for chat request"""
+
     messages: list[ChatMessage]
-    provider: str = 'openai'
+    provider: str = "openai"
     temperature: float = 0.7
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
@@ -71,6 +78,7 @@ class ChatRequest:
 @dataclass
 class ChatResponse:
     """Model for chat response"""
+
     messages: list[ChatMessage]
     response: str
     provider: str
@@ -81,6 +89,7 @@ class ChatResponse:
 @dataclass
 class APIError:
     """Model for API errors"""
+
     error: str
     error_code: str
     details: str | None = None
@@ -90,6 +99,7 @@ class APIError:
 @dataclass
 class APIResponse:
     """Model for API responses"""
+
     status: str  # 'success', 'error'
     data: Any = None
     error: APIError | None = None
@@ -100,15 +110,15 @@ class ModelRegistry:
     """Registry for data models"""
 
     _models: ClassVar[dict[str, type]] = {
-        'AnalysisRequest': AnalysisRequest,
-        'AnalysisResult': AnalysisResult,
-        'GenerationRequest': GenerationRequest,
-        'GenerationResult': GenerationResult,
-        'ChatMessage': ChatMessage,
-        'ChatRequest': ChatRequest,
-        'ChatResponse': ChatResponse,
-        'APIError': APIError,
-        'APIResponse': APIResponse,
+        "AnalysisRequest": AnalysisRequest,
+        "AnalysisResult": AnalysisResult,
+        "GenerationRequest": GenerationRequest,
+        "GenerationResult": GenerationResult,
+        "ChatMessage": ChatMessage,
+        "ChatRequest": ChatRequest,
+        "ChatResponse": ChatResponse,
+        "APIError": APIError,
+        "APIResponse": APIResponse,
     }
 
     @staticmethod
@@ -120,4 +130,3 @@ class ModelRegistry:
     def get_all_models():
         """Get all registered models"""
         return list(ModelRegistry._models.keys())
-

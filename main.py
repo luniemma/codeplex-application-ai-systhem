@@ -1,6 +1,7 @@
 """
 Codeplex AI - Main Application Entry Point
 """
+
 import logging
 import os
 import time
@@ -44,8 +45,11 @@ def _log_startup_banner() -> None:
     logger.info("  bind          = %s:%s", config.API_HOST, config.API_PORT)
     logger.info("  log_level     = %s", config.LOG_LEVEL)
     logger.info("  log_format    = %s", os.getenv("LOG_FORMAT", "text"))
-    logger.info("  providers     = enabled=%s, disabled=%s",
-                enabled or "(none — all keys are placeholders)", disabled)
+    logger.info(
+        "  providers     = enabled=%s, disabled=%s",
+        enabled or "(none — all keys are placeholders)",
+        disabled,
+    )
     logger.info("  cache (redis) = %s", redis_state)
     logger.info("  caching flag  = %s", config.ENABLE_CACHING)
     logger.info("  database_url  = %s", _redact_url(config.DATABASE_URL))
@@ -75,7 +79,9 @@ def _install_request_logging(app: Flask) -> None:
 
     @app.after_request
     def _after_request(response):
-        elapsed_ms = int((time.perf_counter() - getattr(g, "request_start", time.perf_counter())) * 1000)
+        elapsed_ms = int(
+            (time.perf_counter() - getattr(g, "request_start", time.perf_counter())) * 1000
+        )
         # Expose the request id so client can reference it in bug reports.
         response.headers["X-Request-ID"] = getattr(g, "request_id", "-")
 
@@ -105,7 +111,9 @@ def _install_request_logging(app: Flask) -> None:
         if isinstance(exception, HTTPException):
             return
         access_logger.exception(
-            "unhandled exception during %s %s", request.method, request.path,
+            "unhandled exception during %s %s",
+            request.method,
+            request.path,
         )
 
     got_request_exception.connect(_on_unhandled, app)
@@ -139,25 +147,30 @@ def create_app():
         MAX_CONTENT_LENGTH=int(os.getenv("MAX_REQUEST_SIZE", 10485760)),
     )
 
-    CORS(app, resources={
-        r"/api/*": {
-            "origins": _resolve_cors_origins(),
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization", "X-Request-ID"],
-            "expose_headers": ["X-Request-ID"],
-        }
-    })
+    CORS(
+        app,
+        resources={
+            r"/api/*": {
+                "origins": _resolve_cors_origins(),
+                "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization", "X-Request-ID"],
+                "expose_headers": ["X-Request-ID"],
+            }
+        },
+    )
 
     _install_request_logging(app)
 
     # Production security hardening — headers + rate limits.
     from app.security import install_rate_limiter, install_security_headers
+
     install_security_headers(app)
     limiter = install_rate_limiter(app, redis_url=os.getenv("REDIS_URL"))
     app.extensions["limiter"] = limiter  # exposed for per-route limits in routes.py
 
     from app.routes import api_bp, health_bp
     from app.web import web_bp
+
     app.register_blueprint(api_bp)
     app.register_blueprint(health_bp)
     app.register_blueprint(web_bp)

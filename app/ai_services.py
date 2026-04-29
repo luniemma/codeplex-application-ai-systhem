@@ -1,6 +1,7 @@
 """
 AI Services Module - Integration with multiple AI providers
 """
+
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -14,6 +15,7 @@ except ImportError:  # pragma: no cover
 
     def has_request_context() -> bool:  # type: ignore[no-redef]
         return False
+
 
 from app.cache import cache_result
 from app.config import config
@@ -43,7 +45,9 @@ def _timed_call(provider: str, op: str, fn: Callable):
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "provider_call provider=%s op=%s status=ok duration_ms=%d",
-            provider, op, elapsed_ms,
+            provider,
+            op,
+            elapsed_ms,
             extra={"provider": provider, "op": op, "duration_ms": elapsed_ms, "status": "ok"},
         )
         return result
@@ -51,7 +55,10 @@ def _timed_call(provider: str, op: str, fn: Callable):
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.warning(
             "provider_call provider=%s op=%s status=error duration_ms=%d error=%s",
-            provider, op, elapsed_ms, exc,
+            provider,
+            op,
+            elapsed_ms,
+            exc,
             extra={"provider": provider, "op": op, "duration_ms": elapsed_ms, "status": "error"},
         )
         raise
@@ -59,7 +66,7 @@ def _timed_call(provider: str, op: str, fn: Callable):
 
 def _is_key_configured(key: str) -> bool:
     """A key counts as configured only if it's set and not a `your_*` placeholder."""
-    return bool(key) and not key.startswith('your_')
+    return bool(key) and not key.startswith("your_")
 
 
 class AIProvider(ABC):
@@ -86,9 +93,12 @@ class OpenAIProvider(AIProvider):
 
     def __init__(self):
         if not _is_key_configured(config.OPENAI_API_KEY):
-            raise ValueError("OPENAI_API_KEY is not configured. Set a real key in .env (not the 'your_openai_key_here' placeholder) and restart the server.")
+            raise ValueError(
+                "OPENAI_API_KEY is not configured. Set a real key in .env (not the 'your_openai_key_here' placeholder) and restart the server."
+            )
         try:
             import openai
+
             openai.api_key = config.OPENAI_API_KEY
             self.client = openai
         except ImportError:
@@ -101,15 +111,18 @@ class OpenAIProvider(AIProvider):
             response = self.client.ChatCompletion.create(
                 model=config.OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are an expert code analyzer. Analyze the provided code and give detailed feedback."},
-                    {"role": "user", "content": f"Analyze this code:\n\n{code}"}
+                    {
+                        "role": "system",
+                        "content": "You are an expert code analyzer. Analyze the provided code and give detailed feedback.",
+                    },
+                    {"role": "user", "content": f"Analyze this code:\n\n{code}"},
                 ],
                 temperature=config.OPENAI_TEMPERATURE,
             )
             return {
                 "provider": "openai",
                 "analysis": response.choices[0].message.content,
-                "tokens_used": response.usage.total_tokens
+                "tokens_used": response.usage.total_tokens,
             }
         except Exception as e:
             logger.error(f"OpenAI analysis error: {e!s}")
@@ -121,8 +134,11 @@ class OpenAIProvider(AIProvider):
             response = self.client.ChatCompletion.create(
                 model=config.OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are an expert code generator. Generate clean, well-documented code."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are an expert code generator. Generate clean, well-documented code.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=config.OPENAI_TEMPERATURE,
             )
@@ -150,9 +166,12 @@ class AnthropicProvider(AIProvider):
 
     def __init__(self):
         if not _is_key_configured(config.ANTHROPIC_API_KEY):
-            raise ValueError("ANTHROPIC_API_KEY is not configured. Set a real key in .env (not the 'your_anthropic_key_here' placeholder) and restart the server.")
+            raise ValueError(
+                "ANTHROPIC_API_KEY is not configured. Set a real key in .env (not the 'your_anthropic_key_here' placeholder) and restart the server."
+            )
         try:
             from anthropic import Anthropic
+
             self.client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
         except ImportError:
             logger.error("Anthropic package not installed")
@@ -164,14 +183,12 @@ class AnthropicProvider(AIProvider):
             response = self.client.messages.create(
                 model=config.ANTHROPIC_MODEL,
                 max_tokens=2048,
-                messages=[
-                    {"role": "user", "content": f"Analyze this code:\n\n{code}"}
-                ]
+                messages=[{"role": "user", "content": f"Analyze this code:\n\n{code}"}],
             )
             return {
                 "provider": "anthropic",
                 "analysis": response.content[0].text,
-                "tokens_used": response.usage.input_tokens + response.usage.output_tokens
+                "tokens_used": response.usage.input_tokens + response.usage.output_tokens,
             }
         except Exception as e:
             logger.error(f"Anthropic analysis error: {e!s}")
@@ -183,9 +200,7 @@ class AnthropicProvider(AIProvider):
             response = self.client.messages.create(
                 model=config.ANTHROPIC_MODEL,
                 max_tokens=2048,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                messages=[{"role": "user", "content": prompt}],
             )
             return response.content[0].text
         except Exception as e:
@@ -196,9 +211,7 @@ class AnthropicProvider(AIProvider):
         """Chat with Claude"""
         try:
             response = self.client.messages.create(
-                model=config.ANTHROPIC_MODEL,
-                max_tokens=2048,
-                messages=messages
+                model=config.ANTHROPIC_MODEL, max_tokens=2048, messages=messages
             )
             return response.content[0].text
         except Exception as e:
@@ -211,9 +224,12 @@ class GoogleProvider(AIProvider):
 
     def __init__(self):
         if not _is_key_configured(config.GOOGLE_API_KEY):
-            raise ValueError("GOOGLE_API_KEY is not configured. Set a real key in .env (not the 'your_google_key_here' placeholder) and restart the server.")
+            raise ValueError(
+                "GOOGLE_API_KEY is not configured. Set a real key in .env (not the 'your_google_key_here' placeholder) and restart the server."
+            )
         try:
             import google.generativeai as genai
+
             genai.configure(api_key=config.GOOGLE_API_KEY)
             self.client = genai
         except ImportError:
@@ -226,12 +242,12 @@ class GoogleProvider(AIProvider):
             model = self.client.GenerativeModel(config.GOOGLE_MODEL)
             response = model.generate_content(
                 f"Analyze this code:\n\n{code}",
-                generation_config=self.client.types.GenerationConfig(temperature=0.7)
+                generation_config=self.client.types.GenerationConfig(temperature=0.7),
             )
             return {
                 "provider": "google",
                 "analysis": response.text,
-                "tokens_used": 0  # Google API doesn't provide token count in same way
+                "tokens_used": 0,  # Google API doesn't provide token count in same way
             }
         except Exception as e:
             logger.error(f"Google analysis error: {e!s}")
@@ -242,8 +258,7 @@ class GoogleProvider(AIProvider):
         try:
             model = self.client.GenerativeModel(config.GOOGLE_MODEL)
             response = model.generate_content(
-                prompt,
-                generation_config=self.client.types.GenerationConfig(temperature=0.7)
+                prompt, generation_config=self.client.types.GenerationConfig(temperature=0.7)
             )
             return response.text
         except Exception as e:
@@ -259,10 +274,7 @@ class GoogleProvider(AIProvider):
             for msg in messages[:-1]:
                 chat.send_message(msg.get("content", ""), stream=False)
 
-            response = chat.send_message(
-                messages[-1].get("content", ""),
-                stream=False
-            )
+            response = chat.send_message(messages[-1].get("content", ""), stream=False)
             return response.text
         except Exception as e:
             logger.error(f"Google chat error: {e!s}")
@@ -273,13 +285,13 @@ class AIServiceFactory:
     """Factory for creating AI service providers"""
 
     _providers: ClassVar[dict[str, type[AIProvider]]] = {
-        'openai': OpenAIProvider,
-        'anthropic': AnthropicProvider,
-        'google': GoogleProvider,
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+        "google": GoogleProvider,
     }
 
     @staticmethod
-    def create_provider(provider_name: str = 'openai') -> AIProvider:
+    def create_provider(provider_name: str = "openai") -> AIProvider:
         """Create and return an AI provider instance"""
         try:
             provider_class = AIServiceFactory._providers.get(provider_name.lower())
@@ -300,23 +312,22 @@ class AIServiceFactory:
 # pairs are memoized. No-ops gracefully if Redis is unreachable or
 # ENABLE_CACHING is False. Each upstream call is wrapped in _timed_call so
 # we get a single log line per real provider invocation (cache hits skip it).
-@cache_result(key_prefix='analyze_code')
-def analyze_code(code: str, provider: str = 'openai') -> dict[str, Any]:
+@cache_result(key_prefix="analyze_code")
+def analyze_code(code: str, provider: str = "openai") -> dict[str, Any]:
     """Analyze code with specified provider"""
     ai_provider = AIServiceFactory.create_provider(provider)
     return _timed_call(provider, "analyze_code", lambda: ai_provider.analyze_code(code))
 
 
-@cache_result(key_prefix='generate_code')
-def generate_code(prompt: str, provider: str = 'openai') -> str:
+@cache_result(key_prefix="generate_code")
+def generate_code(prompt: str, provider: str = "openai") -> str:
     """Generate code with specified provider"""
     ai_provider = AIServiceFactory.create_provider(provider)
     return _timed_call(provider, "generate_code", lambda: ai_provider.generate_code(prompt))
 
 
-@cache_result(key_prefix='chat')
-def chat(messages: list[dict[str, str]], provider: str = 'openai') -> str:
+@cache_result(key_prefix="chat")
+def chat(messages: list[dict[str, str]], provider: str = "openai") -> str:
     """Chat with AI with specified provider"""
     ai_provider = AIServiceFactory.create_provider(provider)
     return _timed_call(provider, "chat", lambda: ai_provider.chat(messages))
-

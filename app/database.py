@@ -1,6 +1,7 @@
 """
 Database Module - Database initialization and management
 """
+
 import logging
 
 from sqlalchemy import create_engine
@@ -12,11 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Create database engine
 engine = create_engine(
-    config.DATABASE_URL,
-    echo=config.DEBUG,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20
+    config.DATABASE_URL, echo=config.DEBUG, pool_pre_ping=True, pool_size=10, max_overflow=20
 )
 
 # Create session factory
@@ -60,4 +57,3 @@ def reset_db():
     drop_db()
     init_db()
     logger.info("Database reset successfully")
-

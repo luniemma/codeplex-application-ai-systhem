@@ -2,6 +2,7 @@
 Startup Verification Script for Codeplex AI
 Checks all requirements before running the application
 """
+
 import os
 import sys
 
@@ -25,7 +26,7 @@ def check_requirements():
 
     # Check if we're in the right directory
     print("2. Project Structure Check")
-    if os.path.exists('app') and os.path.exists('main.py'):
+    if os.path.exists("app") and os.path.exists("main.py"):
         print("   ✓ Project structure intact")
     else:
         print("   ✗ Project structure missing")
@@ -34,14 +35,12 @@ def check_requirements():
 
     # Check dependencies
     print("3. Dependencies Check")
-    required_packages = [
-        'flask', 'flask_cors', 'python_dotenv', 'requests'
-    ]
+    required_packages = ["flask", "flask_cors", "python_dotenv", "requests"]
 
     missing_packages = []
     for package in required_packages:
         try:
-            __import__(package.replace('-', '_'))
+            __import__(package.replace("-", "_"))
             print(f"   ✓ {package}")
         except ImportError:
             print(f"   ✗ {package}")
@@ -56,7 +55,7 @@ def check_requirements():
 
     # Check .env file
     print("4. Environment Configuration Check")
-    if os.path.exists('.env'):
+    if os.path.exists(".env"):
         print("   ✓ .env file exists")
     else:
         print("   ⚠ .env file not found (will use defaults)")
@@ -68,16 +67,17 @@ def check_requirements():
     # Check API keys
     print("5. API Keys Check")
     from dotenv import load_dotenv
+
     load_dotenv()
 
     api_status = {
-        'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
-        'ANTHROPIC_API_KEY': os.getenv('ANTHROPIC_API_KEY'),
-        'GOOGLE_API_KEY': os.getenv('GOOGLE_API_KEY'),
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
     }
 
     for key, value in api_status.items():
-        if value and not value.startswith('your_'):
+        if value and not value.startswith("your_"):
             print(f"   ✓ {key} configured")
         else:
             print(f"   ⚠ {key} not configured")
@@ -93,6 +93,7 @@ def run_health_check():
 
     try:
         from main import create_app
+
         create_app()  # construct & assert no boot-time errors
 
         print("✓ Flask app created successfully")
@@ -120,15 +121,15 @@ def run_health_check():
     except Exception as e:
         print(f"✗ Error creating Flask app: {e!s}")
         import traceback
+
         traceback.print_exc()
         return False
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Change to script directory
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
     # Run checks
     if check_requirements():
         run_health_check()
-

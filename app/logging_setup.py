@@ -10,6 +10,7 @@ A `RequestIdFilter` injects `request_id` (and `provider` when set) onto every
 log record from `flask.g`, so handlers and downstream calls don't need to
 thread the ID through manually.
 """
+
 import json
 import logging
 import os
@@ -50,10 +51,7 @@ class RequestIdFilter(logging.Filter):
 class TextFormatter(logging.Formatter):
     """Human-readable single-line format with optional request_id."""
 
-    DEFAULT_FORMAT = (
-        "%(asctime)s %(levelname)-5s %(name)s "
-        "[req=%(request_id)s] %(message)s"
-    )
+    DEFAULT_FORMAT = "%(asctime)s %(levelname)-5s %(name)s [req=%(request_id)s] %(message)s"
 
     def __init__(self) -> None:
         super().__init__(fmt=self.DEFAULT_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
@@ -64,17 +62,34 @@ class JsonFormatter(logging.Formatter):
 
     # Standard LogRecord attributes we don't want to copy verbatim.
     _RESERVED: ClassVar[set[str]] = {
-        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-        "created", "msecs", "relativeCreated", "thread", "threadName",
-        "processName", "process", "message", "asctime",
+        "name",
+        "msg",
+        "args",
+        "levelname",
+        "levelno",
+        "pathname",
+        "filename",
+        "module",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "lineno",
+        "funcName",
+        "created",
+        "msecs",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "processName",
+        "process",
+        "message",
+        "asctime",
     }
 
     def format(self, record: logging.LogRecord) -> str:
         payload = {
-            "timestamp": time.strftime(
-                "%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)
-            ) + f".{int(record.msecs):03d}Z",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
+            + f".{int(record.msecs):03d}Z",
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

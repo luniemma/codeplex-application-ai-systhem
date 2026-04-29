@@ -1,15 +1,16 @@
 """
 Web UI Blueprint - serves the homepage and interactive playground.
 """
+
 from flask import Blueprint, render_template_string
 
 from app.config import config
 
-web_bp = Blueprint('web', __name__)
+web_bp = Blueprint("web", __name__)
 
 
 def _key_set(value: str) -> bool:
-    return bool(value) and not value.startswith('your_')
+    return bool(value) and not value.startswith("your_")
 
 
 INDEX_HTML = r"""<!DOCTYPE html>
@@ -481,12 +482,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
 """
 
 
-@web_bp.route('/')
+@web_bp.route("/")
 def index():
     providers = {
-        'openai': _key_set(config.OPENAI_API_KEY),
-        'anthropic': _key_set(config.ANTHROPIC_API_KEY),
-        'google': _key_set(config.GOOGLE_API_KEY),
+        "openai": _key_set(config.OPENAI_API_KEY),
+        "anthropic": _key_set(config.ANTHROPIC_API_KEY),
+        "google": _key_set(config.GOOGLE_API_KEY),
     }
     return render_template_string(
         INDEX_HTML,

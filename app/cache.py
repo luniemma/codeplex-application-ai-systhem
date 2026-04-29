@@ -1,6 +1,7 @@
 """
 Caching Module - Redis-based caching
 """
+
 import json
 import logging
 from functools import wraps
@@ -93,6 +94,7 @@ cache_client = CacheClient()
 
 def cache_result(ttl: int = config.CACHE_TTL, key_prefix: str | None = None):
     """Cache decorator"""
+
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
@@ -116,7 +118,9 @@ def cache_result(ttl: int = config.CACHE_TTL, key_prefix: str | None = None):
             result = f(*args, **kwargs)
             cache_client.set(key, result, ttl)
             return result
+
         return decorated_function
+
     return decorator
 
 
@@ -165,4 +169,3 @@ class InMemoryCache:
         """Clear all cache"""
         self.cache.clear()
         return True
-

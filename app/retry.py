@@ -6,6 +6,7 @@ library's API. Defaults: up to 3 attempts, exponential backoff with jitter,
 total cap ~10s. Only retries on transient errors (network, timeout, 5xx,
 429); permanent errors (auth, invalid model) propagate immediately.
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,9 +39,16 @@ def _is_retryable(exc: BaseException) -> bool:
 
     # Transient failures — retry.
     transient_keywords = (
-        "timeout", "connection", "network", "unavailable",
-        "ratelimit", "rate_limit", "toomanyrequests",
-        "503", "504", "502",
+        "timeout",
+        "connection",
+        "network",
+        "unavailable",
+        "ratelimit",
+        "rate_limit",
+        "toomanyrequests",
+        "503",
+        "504",
+        "502",
     )
     msg = str(exc).lower()
     if any(k in name for k in transient_keywords):
