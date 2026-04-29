@@ -868,10 +868,22 @@ TAB_CONFIG = [
         "send_label": "Send",
         "placeholder": "Ask anything... e.g. Explain Python decorators with one short example.",
         "examples": [
-            {"label": "Explain decorators", "fill": "Explain Python decorators with a small example."},
-            {"label": "When to use async", "fill": "When should I use async/await in Python? Trade-offs?"},
-            {"label": "GIL impact", "fill": "How does the Python GIL affect multi-threaded performance?"},
-            {"label": "Pick a DB", "fill": "I have a write-heavy workload of ~5k inserts/sec. Postgres or DynamoDB?"},
+            {
+                "label": "Explain decorators",
+                "fill": "Explain Python decorators with a small example.",
+            },
+            {
+                "label": "When to use async",
+                "fill": "When should I use async/await in Python? Trade-offs?",
+            },
+            {
+                "label": "GIL impact",
+                "fill": "How does the Python GIL affect multi-threaded performance?",
+            },
+            {
+                "label": "Pick a DB",
+                "fill": "I have a write-heavy workload of ~5k inserts/sec. Postgres or DynamoDB?",
+            },
         ],
     },
     {
@@ -880,9 +892,18 @@ TAB_CONFIG = [
         "send_label": "Analyze",
         "placeholder": "def add(a, b):\n    return a + b",
         "examples": [
-            {"label": "Mutable default arg", "fill": "def append_to(item, target=[]):\n    target.append(item)\n    return target"},
-            {"label": "N+1 query", "fill": "users = User.query.all()\nfor u in users:\n    print(u.posts.count())"},
-            {"label": "Race condition", "fill": "balance = 100\ndef withdraw(amount):\n    global balance\n    if balance >= amount:\n        balance -= amount\n        return True\n    return False"},
+            {
+                "label": "Mutable default arg",
+                "fill": "def append_to(item, target=[]):\n    target.append(item)\n    return target",
+            },
+            {
+                "label": "N+1 query",
+                "fill": "users = User.query.all()\nfor u in users:\n    print(u.posts.count())",
+            },
+            {
+                "label": "Race condition",
+                "fill": "balance = 100\ndef withdraw(amount):\n    global balance\n    if balance >= amount:\n        balance -= amount\n        return True\n    return False",
+            },
         ],
     },
     {
@@ -891,10 +912,22 @@ TAB_CONFIG = [
         "send_label": "Generate",
         "placeholder": "Write a Python function that returns the nth Fibonacci number iteratively.",
         "examples": [
-            {"label": "Fibonacci (iterative)", "fill": "Write a Python function that returns the nth Fibonacci number iteratively."},
-            {"label": "Retry decorator", "fill": "Write a Python decorator that retries a function up to N times on exceptions, with exponential backoff."},
-            {"label": "Rate limiter", "fill": "Implement a token bucket rate limiter in Python with a clean class API."},
-            {"label": "LRU cache", "fill": "Implement a simple LRU cache class in Python without using functools.lru_cache."},
+            {
+                "label": "Fibonacci (iterative)",
+                "fill": "Write a Python function that returns the nth Fibonacci number iteratively.",
+            },
+            {
+                "label": "Retry decorator",
+                "fill": "Write a Python decorator that retries a function up to N times on exceptions, with exponential backoff.",
+            },
+            {
+                "label": "Rate limiter",
+                "fill": "Implement a token bucket rate limiter in Python with a clean class API.",
+            },
+            {
+                "label": "LRU cache",
+                "fill": "Implement a simple LRU cache class in Python without using functools.lru_cache.",
+            },
         ],
     },
 ]

@@ -178,7 +178,9 @@ class OpenAIProvider(AIProvider):
             for chunk in stream:
                 # Older openai==0.27.x SDK exposes delta as a dict-like.
                 delta = chunk.choices[0].delta
-                content = getattr(delta, "content", None) or (delta.get("content") if isinstance(delta, dict) else None)
+                content = getattr(delta, "content", None) or (
+                    delta.get("content") if isinstance(delta, dict) else None
+                )
                 if content:
                     yield content
         except Exception as e:
@@ -407,14 +409,29 @@ def chat_stream(messages: list[dict[str, str]], provider: str = "openai") -> Ite
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "provider_call provider=%s op=chat_stream status=ok duration_ms=%d chunks=%d",
-            provider, "chat_stream", elapsed_ms,
-            extra={"provider": provider, "op": "chat_stream", "duration_ms": elapsed_ms, "status": "ok", "chunks": chunks},
+            provider,
+            "chat_stream",
+            elapsed_ms,
+            extra={
+                "provider": provider,
+                "op": "chat_stream",
+                "duration_ms": elapsed_ms,
+                "status": "ok",
+                "chunks": chunks,
+            },
         )
     except Exception as exc:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.warning(
             "provider_call provider=%s op=chat_stream status=error duration_ms=%d error=%s",
-            provider, elapsed_ms, exc,
-            extra={"provider": provider, "op": "chat_stream", "duration_ms": elapsed_ms, "status": "error"},
+            provider,
+            elapsed_ms,
+            exc,
+            extra={
+                "provider": provider,
+                "op": "chat_stream",
+                "duration_ms": elapsed_ms,
+                "status": "error",
+            },
         )
         raise
