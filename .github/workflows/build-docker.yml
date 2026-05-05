@@ -219,7 +219,7 @@ jobs:
       # for supply-chain security; trailing tag comment lets Dependabot
       # update it.
       - name: Trivy CVE scan (human-readable, gates the build)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.smoke_tag }}
           severity: ${{ inputs.cve_severity }}
@@ -231,7 +231,7 @@ jobs:
         # `always()` ensures we still get findings into Code Scanning even
         # when the build-gating scan above already failed.
         if: always()
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.smoke_tag }}
           severity: ${{ inputs.cve_severity }}
