@@ -29,6 +29,10 @@
 #   * prod can only be deployed from release/*
 # Combine this with the GitHub Environment "deployment branches" setting for
 # defence-in-depth.
+#
+# End-to-end verification: comment touched to exercise the full build →
+# deploy chain (Docker → workflow_run → auto_dev → helm upgrade →
+# rollout status → HTTP smoke test → endpoints output).
 
 name: Deploy
 
