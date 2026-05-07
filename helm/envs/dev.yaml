@@ -3,20 +3,21 @@
 
 replicaCount: 1
 
-# /readyz returns 200 only if at least one provider key is non-empty and
-# doesn't start with "your_". Dev gets a placeholder so pods pass readiness
-# without needing real keys committed to git. Outbound API calls will return
-# auth errors when exercised — that's expected for dev. Stand up a real
-# Secret out-of-band and switch to existingSecret if dev needs real calls.
+# Provider keys come from a Kubernetes Secret managed out-of-band — never
+# commit real keys to git. Create the Secret once per cluster:
+#
+#   kubectl -n codeplex-dev create secret generic codeplex-ai-real-secrets \
+#     --from-literal=OPENAI_API_KEY=sk-... \
+#     --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
+#     --from-literal=GOOGLE_API_KEY=AIza... \
+#     --from-literal=SECRET_KEY="$(openssl rand -hex 32)" \
+#     --from-literal=JWT_SECRET="$(openssl rand -hex 32)"
+#
+# `existingSecret` makes the chart skip rendering its own Secret and bind the
+# Deployment's envFrom to this one instead.
 secrets:
-  create: true
-  existingSecret: ""
-  values:
-    OPENAI_API_KEY: ""
-    ANTHROPIC_API_KEY: ""
-    GOOGLE_API_KEY: "dev-placeholder-not-a-real-key"
-    SECRET_KEY: "dev-secret-key-not-for-production"
-    JWT_SECRET: "dev-jwt-secret-not-for-production"
+  create: false
+  existingSecret: codeplex-ai-real-secrets
 
 config:
   ENVIRONMENT: development
