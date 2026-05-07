@@ -397,12 +397,13 @@ jobs:
             "${{ inputs.wait_for_workload }}" \
             --timeout "${{ inputs.timeout }}"
 
-      # End-to-end smoke test — actually hit /livez via the in-cluster Service
-      # name to confirm Service routing + endpoint slices + pod responses are
-      # all working together. `kubectl rollout status` only confirms pods went
-      # Ready; this confirms a live HTTP request returns 200. Runs a one-shot
-      # curl pod and exits its status code.
-      - name: Smoke test (HTTP /livez)
+      # End-to-end smoke test — hit each Service via its in-cluster DNS name to
+      # confirm Service routing + endpoint slices + pod responses are all
+      # working together. `kubectl rollout status` only confirms pods went
+      # Ready; this confirms live HTTP requests return 2xx for app, Prometheus,
+      # AND Grafana. Runs one curl pod that probes all three sequentially —
+      # any non-2xx exits the pod non-zero, which fails the step.
+      - name: Smoke test (HTTP probes — app, Prometheus, Grafana)
         if: inputs.method == 'helm' && inputs.dry_run == false
         shell: bash
         env:
@@ -410,20 +411,42 @@ jobs:
           RELEASE: ${{ inputs.release_name }}
         run: |
           set -euo pipefail
-          # Service port comes from the chart; default 8000 matches values.yaml.
-          port=$(kubectl -n "$NAMESPACE" get svc "$RELEASE" \
+          # App service port (from the chart); default 8000 matches values.yaml.
+          app_port=$(kubectl -n "$NAMESPACE" get svc "$RELEASE" \
             -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null || echo "8000")
-          target="http://${RELEASE}.${NAMESPACE}.svc.cluster.local:${port}/livez"
-          echo "Probing ${target} from inside the cluster…"
 
-          # `kubectl run --rm -it --restart=Never` exits with the container's
-          # exit code, so a non-2xx fails the step.
+          app_url="http://${RELEASE}.${NAMESPACE}.svc.cluster.local:${app_port}/livez"
+          # Prometheus runs with --web.route-prefix=/prometheus, so /-/ready
+          # lives under that subpath (same reason the Deployment probes were
+          # fixed in 42-prometheus.yaml).
+          prom_url="http://prometheus.${NAMESPACE}.svc.cluster.local:9090/prometheus/-/ready"
+          # Grafana serves from /grafana subpath; /api/health is the standard
+          # liveness endpoint.
+          graf_url="http://grafana.${NAMESPACE}.svc.cluster.local:3000/grafana/api/health"
+
+          echo "Probing all three services from inside the cluster…"
+          # One curl pod, three sequential probes. The container exits with
+          # the LAST command's exit code, so we && them to fail-fast on the
+          # first non-2xx.
           kubectl -n "$NAMESPACE" run smoke-${GITHUB_RUN_ID:-$$} \
             --image=curlimages/curl:8.10.1 \
             --rm --restart=Never --quiet --attach=true \
-            --command -- curl --fail --silent --show-error --max-time 10 "$target"
+            --command -- sh -c "
+              echo '→ app /livez' && curl --fail --silent --show-error --max-time 10 ${app_url} && echo &&
+              echo '→ prometheus /prometheus/-/ready' && curl --fail --silent --show-error --max-time 10 ${prom_url} && echo &&
+              echo '→ grafana /grafana/api/health' && curl --fail --silent --show-error --max-time 10 ${graf_url} && echo
+            "
 
-          echo "::notice title=Smoke test::${target} returned 200"
+          {
+            echo "## Smoke test"
+            echo ""
+            echo "All three services returned 2xx on their in-cluster health endpoints:"
+            echo ""
+            echo "- App: \`${app_url}\`"
+            echo "- Prometheus: \`${prom_url}\`"
+            echo "- Grafana: \`${graf_url}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Smoke test::app + Prometheus + Grafana all healthy"
 
       # Emit the three service URLs to the workflow run summary. If the shared
       # Ingress already has an NLB hostname, those URLs are public and clickable.
