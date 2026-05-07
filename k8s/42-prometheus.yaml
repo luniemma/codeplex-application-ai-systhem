@@ -55,6 +55,10 @@ spec:
             - --web.enable-lifecycle      # POST /-/reload for config changes
             - --web.console.libraries=/usr/share/prometheus/console_libraries
             - --web.console.templates=/usr/share/prometheus/consoles
+            # Served behind shared Ingress at /prometheus. external-url is a
+            # path so it works with whatever ALB/NLB hostname AWS hands out.
+            - --web.external-url=/prometheus
+            - --web.route-prefix=/prometheus
           ports:
             - name: http
               containerPort: 9090

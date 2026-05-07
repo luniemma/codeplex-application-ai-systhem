@@ -359,6 +359,28 @@ jobs:
             | kubectl apply -n "${{ inputs.namespace }}" --server-side --prune=false -f -
 
       # ----------------------------------------------------------------------
+      # Monitoring (helm path only) — applies the Prometheus + Grafana stack
+      # and the shared Ingress that fronts app + prom + grafana behind one NLB.
+      # The Helm chart owns app + redis; this step adds the rest. nginx-ingress
+      # controller must already be installed cluster-wide.
+      # ----------------------------------------------------------------------
+      - name: Deploy monitoring (Prometheus + Grafana + Ingress)
+        if: inputs.method == 'helm' && inputs.dry_run == false
+        shell: bash
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          # `kustomize edit set namespace` rewrites metadata.namespace AND
+          # RoleBinding subjects.namespace to the env-scoped namespace.
+          (cd k8s/monitoring && kustomize edit set namespace "$NAMESPACE")
+          kubectl apply -k k8s/monitoring/ --server-side
+          # Wait for the Ingress to bind a load balancer hostname (nginx-ingress
+          # picks up the controller's NLB on first reconcile).
+          kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.loadBalancer.ingress}' \
+            ingress/codeplex-shared --timeout=180s || true
+
+      # ----------------------------------------------------------------------
       # Post-deploy verification
       # ----------------------------------------------------------------------
       - name: Wait for rollout
@@ -369,6 +391,71 @@ jobs:
           kubectl -n "${{ inputs.namespace }}" rollout status \
             "${{ inputs.wait_for_workload }}" \
             --timeout "${{ inputs.timeout }}"
+
+      # Emit the three service URLs to the workflow run summary. If the shared
+      # Ingress already has an NLB hostname, those URLs are public and clickable.
+      # If it doesn't (e.g. AWS account doesn't yet support creating ELBs, or
+      # the controller's LB is still provisioning), fall back to ready-to-paste
+      # `kubectl port-forward` commands keyed to the cluster + namespace.
+      - name: Print endpoints
+        if: inputs.method == 'helm' && inputs.dry_run == false
+        id: endpoints
+        shell: bash
+        env:
+          CLUSTER:   ${{ inputs.cluster_name }}
+          REGION:    ${{ inputs.aws_region }}
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          host=$(kubectl -n "$NAMESPACE" get ingress codeplex-shared \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          if [ -z "$host" ]; then
+            host=$(kubectl -n "$NAMESPACE" get ingress codeplex-shared \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          fi
+
+          {
+            echo "## Endpoints"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$host" ]; then
+            app_url="http://${host}/"
+            prom_url="http://${host}/prometheus"
+            graf_url="http://${host}/grafana"
+            echo "host=${host}"      >> "$GITHUB_OUTPUT"
+            echo "app_url=${app_url}" >> "$GITHUB_OUTPUT"
+
+            {
+              echo "Public — shared Ingress NLB:"
+              echo ""
+              echo "| Service | URL |"
+              echo "|---|---|"
+              echo "| App        | [\`${app_url}\`](${app_url}) |"
+              echo "| Prometheus | [\`${prom_url}\`](${prom_url}) |"
+              echo "| Grafana    | [\`${graf_url}\`](${graf_url}) |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "::notice title=App::${app_url}"
+            echo "::notice title=Prometheus::${prom_url}"
+            echo "::notice title=Grafana::${graf_url}"
+          else
+            echo "::warning::Shared Ingress has no LB address yet — emitting port-forward commands instead. Check 'kubectl -n ingress-nginx describe svc ingress-nginx-controller' to see why."
+
+            kc="aws eks update-kubeconfig --region ${REGION} --name ${CLUSTER}"
+            {
+              echo "Local — Ingress LB not provisioned yet (often AWS account ELB block, or controller still pending). Run these to browse:"
+              echo ""
+              echo '```bash'
+              echo "${kc}"
+              echo "kubectl -n ${NAMESPACE} port-forward svc/codeplex-ai 18000:8000   # App        → http://localhost:18000"
+              echo "kubectl -n ${NAMESPACE} port-forward svc/prometheus  19090:9090   # Prometheus → http://localhost:19090/prometheus"
+              echo "kubectl -n ${NAMESPACE} port-forward svc/grafana     13000:3000   # Grafana    → http://localhost:13000/grafana"
+              echo '```'
+              echo ""
+              echo "Grafana login: \`admin\` / \`admin\` (change before exposing publicly)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Summary
         if: always()

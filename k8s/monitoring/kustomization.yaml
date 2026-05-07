@@ -1,0 +1,27 @@
+# Monitoring overlay — applied alongside the Helm-managed app to install
+# Prometheus + Grafana + the shared Ingress that fronts all three services.
+#
+# Deployed by .github/workflows/deploy-eks.yml as a kubectl apply -k step
+# AFTER `helm upgrade --install`, so the app's Service exists when the Ingress
+# resolves its backend.
+#
+# Resources are listed by relative path back to the parent k8s/ dir.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Placeholder — rewritten by `kustomize edit set namespace` in CI.
+namespace: codeplex-dev
+
+resources:
+  - ../40-prometheus-rbac.yaml
+  - ../41-prometheus-config.yaml
+  - ../42-prometheus.yaml
+  - ../50-grafana-secret.yaml
+  - ../51-grafana-provisioning.yaml
+  - ../52-grafana-dashboard.yaml
+  - ../53-grafana.yaml
+  - ingress.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: codeplex-ai

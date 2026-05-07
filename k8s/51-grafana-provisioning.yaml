@@ -15,7 +15,9 @@ data:
         type: prometheus
         uid: prometheus-codeplex
         access: proxy
-        url: http://prometheus:9090
+        # Prometheus runs with --web.route-prefix=/prometheus, so even on the
+        # in-cluster service it requires the subpath in the URL.
+        url: http://prometheus:9090/prometheus
         isDefault: true
         editable: false
         jsonData:

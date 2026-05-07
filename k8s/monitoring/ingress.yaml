@@ -1,0 +1,52 @@
+# Shared Ingress fronting the app, Prometheus, and Grafana behind one NLB.
+#
+# Routing is path-based (no DNS required — the NLB hostname is whatever AWS
+# hands out at provision time):
+#
+#   /            → codeplex-ai           : 8000   (the app)
+#   /prometheus  → prometheus            : 9090
+#   /grafana     → grafana               : 3000
+#
+# Prometheus runs with --web.route-prefix=/prometheus so it serves itself at
+# that subpath natively. Grafana runs with GF_SERVER_SERVE_FROM_SUB_PATH=true
+# and GF_SERVER_ROOT_URL=/grafana for the same reason. So nginx does NOT
+# rewrite paths — it just routes — and the apps handle their own subpath.
+#
+# The app at "/" is Helm-managed; this Ingress only references its Service by
+# name (codeplex-ai), which Helm creates from the release name.
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codeplex-shared
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /prometheus
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
+          - path: /grafana
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+          # App catches everything else. Must be last — nginx-ingress matches
+          # in declared order for Prefix rules of the same length.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: codeplex-ai
+                port:
+                  number: 8000
