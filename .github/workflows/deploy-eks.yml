@@ -380,10 +380,20 @@ jobs:
           # restrictor relaxed and pipe to apply explicitly.
           kustomize build --load-restrictor=LoadRestrictionsNone k8s/monitoring/ \
             | kubectl apply --server-side -f -
+
           # Wait for the Ingress to bind a load balancer hostname (nginx-ingress
-          # picks up the controller's NLB on first reconcile).
-          kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.loadBalancer.ingress}' \
-            ingress/codeplex-shared --timeout=180s || true
+          # picks up the controller's NLB on first reconcile). This times out
+          # cleanly if AWS hasn't provisioned the NLB yet (e.g. account ELB
+          # block) — the next step gracefully falls back to port-forward URLs.
+          # We suppress kubectl wait's noisy "error:" stderr to keep the log
+          # clean; the actual presence of an LB hostname is checked properly
+          # in the "Print endpoints" step.
+          if kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.loadBalancer.ingress}' \
+               ingress/codeplex-shared --timeout=180s 2>/dev/null; then
+            echo "::notice::Ingress codeplex-shared has an LB hostname — endpoints step will emit public URLs."
+          else
+            echo "::notice::Ingress codeplex-shared has no LB hostname after 180s — endpoints step will fall back to port-forward commands. Check the nginx-ingress controller Service for AWS ELB issues."
+          fi
 
       # ----------------------------------------------------------------------
       # Post-deploy verification
