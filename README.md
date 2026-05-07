@@ -504,19 +504,28 @@ docker-compose up
 
 **Topology:** one shared EKS cluster (`codeplex-eks`, provisioned by the [terraform-aws-ec2 `platform` stack](../terraform-aws-ec2/environments/platform.tfvars)), one Kubernetes namespace per environment — `codeplex-dev`, `codeplex-qa`, `codeplex-staging`, `codeplex-prod`. Per-env values are loaded from [.github/variables/configurations.yaml](.github/variables/configurations.yaml) by the deploy workflow.
 
-CI deploy chain:
+### CI deploy chain
 
 ```
-infra repo: terraform apply (env=platform) ──► repository_dispatch (event=deploy-app, env=dev)
-                                                          │
-                                                          ▼
-              app repo: deploy.yml ──► deploy-eks.yml ──► helm upgrade --install
-                                                          (namespace=codeplex-dev)
+push to master
+  → Docker workflow (build, scan, sign, push to GHCR + Docker Hub)
+  → workflow_run fires Deploy
+  → config job (loads configurations.yaml)
+  → runtime job (computes image tag = sha-<12-char>)
+  → auto_dev → deploy-eks.yml
+    → AWS OIDC → assume codeplex-app-deploy IAM role
+    → aws eks update-kubeconfig
+    → recover-from-stuck-Helm-release (no-op if healthy)
+    → helm upgrade --install --atomic --wait (codeplex-ai chart)
+    → kubectl apply -k k8s/monitoring (Prometheus + Grafana + shared Ingress)
+    → kubectl rollout status
+    → HTTP smoke test (curl /livez, /prometheus/-/ready, /grafana/api/health)
+    → print endpoints to run summary (URLs if Ingress has LB; else port-forward commands)
 ```
 
-`qa` / `staging` / `prod` deploys go through `workflow_dispatch` with required reviewers on the matching GitHub Environment (the `dispatch_validate` job rejects non-`dev` from cross-repo dispatch).
+Auto-deploy fires for `master` / `main` only — not `feature/*`, because the Docker workflow doesn't push images for feature branches. `qa` / `staging` / `prod` deploys go through `workflow_dispatch` with required reviewers on the matching GitHub Environment (the `dispatch_validate` job rejects non-`dev` from cross-repo dispatch).
 
-Two equivalent local deployment paths — pick whichever fits your cluster:
+A separate `repository_dispatch: deploy-app` path exists for the infra repo's `trigger_app_deploy` job to fire after a successful `terraform apply` on the platform stack — that path also lands in `codeplex-dev` only.
 
 ### Helm chart ([`helm/codeplex-ai/`](helm/codeplex-ai/README.md)) — primary path
 
@@ -526,10 +535,10 @@ Per-env overlays live in [helm/envs/](helm/envs/) and are layered on top of `hel
 
 | File | Used by | Notes |
 |---|---|---|
-| [helm/envs/dev.yaml](helm/envs/dev.yaml) | `codeplex-dev` namespace | 1 replica, debug logs, bundled Redis |
+| [helm/envs/dev.yaml](helm/envs/dev.yaml) | `codeplex-dev` namespace | 1 replica, debug logs, bundled Redis. **Real provider keys come from a Kubernetes Secret (`codeplex-ai-real-secrets`) created out-of-band — see [Provider keys](#provider-keys) below.** |
 | [helm/envs/qa.yaml](helm/envs/qa.yaml) | `codeplex-qa` namespace | HPA on, no ingress |
 | [helm/envs/staging.yaml](helm/envs/staging.yaml) | `codeplex-staging` namespace | Mirrors prod sizing, ingress on |
-| [helm/envs/prod.yaml](helm/envs/prod.yaml) | `codeplex-prod` namespace | `secrets.create=false` (out-of-band), `redis.enabled=false` (use managed), ServiceMonitor + Grafana dashboard on |
+| [helm/envs/prod.yaml](helm/envs/prod.yaml) | `codeplex-prod` namespace | `secrets.create=false` (existingSecret), `redis.enabled=false` (use managed Redis), ServiceMonitor + Grafana dashboard on |
 
 CI applies them automatically based on `configurations.yaml`. Local equivalent for one-off deploys:
 
@@ -538,16 +547,51 @@ helm upgrade --install codeplex-ai ./helm/codeplex-ai \
   --namespace codeplex-dev --create-namespace \
   --values helm/codeplex-ai/values.yaml \
   --values helm/envs/dev.yaml \
-  --set image.tag=$(git rev-parse HEAD)
+  --set image.tag=sha-$(git rev-parse --short=12 HEAD)
 ```
 
 The chart's `values.yaml` documents every knob: replicas, autoscaling thresholds, resource limits, ingress, ServiceMonitor labels, etc. For full options see [helm/codeplex-ai/README.md](helm/codeplex-ai/README.md).
 
-### Raw manifests ([`k8s/`](k8s/README.md))
+#### Provider keys
 
-`kubectl apply -k k8s/` (kustomize) brings up the app, Redis, **and** a self-contained Prometheus + Grafana stack — no operator, no Helm. Manifests are numbered so lexical ordering matches apply ordering, and [k8s/kustomization.yaml](k8s/kustomization.yaml) is the entry point.
+Don't commit real API keys to git. dev/qa/staging/prod all reference `codeplex-ai-real-secrets` — create it once per cluster:
 
-The kustomize path is namespace-agnostic: every resource has its `metadata.namespace` rewritten by [kustomization.yaml](k8s/kustomization.yaml)'s `namespace:` field (RoleBinding subjects too). The CI workflow runs `kustomize edit set namespace "$NAMESPACE"` before `kustomize build`, so the same manifests deploy cleanly into any per-env namespace. For a local run:
+```bash
+kubectl -n codeplex-dev create secret generic codeplex-ai-real-secrets \
+  --from-literal=OPENAI_API_KEY=sk-... \
+  --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
+  --from-literal=GOOGLE_API_KEY=AIza... \
+  --from-literal=SECRET_KEY="$(openssl rand -hex 32)" \
+  --from-literal=JWT_SECRET="$(openssl rand -hex 32)"
+```
+
+The chart's Deployment binds `envFrom` to this Secret. Pods rotate automatically on next deploy and pick up the keys.
+
+### Monitoring overlay ([`k8s/monitoring/`](k8s/monitoring/))
+
+The deploy workflow applies a kustomize overlay alongside the Helm release that adds Prometheus + Grafana + a shared Ingress to the same namespace as the app:
+
+```
+codeplex-dev namespace
+├── codeplex-ai (Helm-managed)        — app + Redis + Service + HPA + PDB
+└── monitoring kustomize overlay      — Prometheus + Grafana + Ingress
+   ├── prometheus           : scrapes pods in this namespace via own_namespace=true
+   ├── grafana              : auto-provisions Prometheus datasource + Codeplex dashboard
+   └── codeplex-shared      : nginx Ingress; path-based routing
+                                /            → app  (codeplex-ai:8000)
+                                /prometheus  → prom (prometheus:9090)
+                                /grafana     → graf (grafana:3000)
+```
+
+Prometheus runs with `--web.route-prefix=/prometheus` and Grafana with `GF_SERVER_SERVE_FROM_SUB_PATH=true`, so they natively serve from their subpaths — no path rewriting in nginx. The overlay is namespace-agnostic (kustomize rewrites every `metadata.namespace` and RoleBinding subject at deploy time), so the same files work for `codeplex-qa`/`staging`/`prod` too.
+
+The shared Ingress depends on the cluster-wide `nginx-ingress` controller, which is installed once by the platform terraform stack ([helm_release.ingress_nginx](../terraform-aws-ec2/main.tf)).
+
+### Raw manifests ([`k8s/`](k8s/README.md)) — local-cluster path
+
+`kubectl apply -k k8s/` (kustomize) brings up the app, Redis, **and** the bundled monitoring stack — no Helm. Manifests are numbered so lexical ordering matches apply ordering, and [k8s/kustomization.yaml](k8s/kustomization.yaml) is the entry point.
+
+The kustomize path is namespace-agnostic: every resource has its `metadata.namespace` rewritten by `kustomization.yaml`'s `namespace:` field (RoleBinding subjects too). For a local run:
 
 ```bash
 cp k8s/11-secret.example.yaml k8s/11-secret.yaml      # fill in real API keys
@@ -556,7 +600,7 @@ kubectl apply -k k8s/
 kubectl -n codeplex-dev port-forward svc/grafana 3000:3000   # admin / admin
 ```
 
-The bundled Prometheus uses `namespaces.own_namespace: true`, so service discovery is automatically scoped to whichever namespace it's deployed into — no per-env config edits needed. The bundled Grafana auto-imports a "Codeplex AI" dashboard with request rate, latency percentiles, error rate, top routes, and per-pod request rate / p95 latency.
+Use this path for minikube/kind/Docker Desktop — no Helm, no AWS, no Ingress required.
 
 ### One-shot script
 
@@ -586,25 +630,25 @@ After `make k8s-up`, all three services are reachable on localhost. POST endpoin
 | [`/metrics`](http://localhost:18000/metrics)                     | Prometheus exposition format (request counters, latency histograms, build info) |
 | [`/api/models`](http://localhost:18000/api/models)               | JSON list of registered providers                                     |
 
-**Prometheus** — `http://localhost:19090`
+**Prometheus** — `http://localhost:19090/prometheus` (served from a subpath because [42-prometheus.yaml](k8s/42-prometheus.yaml) sets `--web.route-prefix=/prometheus`)
 
-| URL                                                              | What                                                                       |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`/`](http://localhost:19090/)                                   | Prometheus UI (graph, alerts, status)                                      |
-| [`/targets`](http://localhost:19090/targets)                     | Scrape target health — should show 3 `up` (2 app pods + Prometheus self-scrape) |
-| [`/graph?g0.expr=flask_http_request_total`](http://localhost:19090/graph?g0.expr=flask_http_request_total) | Quick graph: HTTP request counter      |
-| [`/-/healthy`](http://localhost:19090/-/healthy)                 | Liveness probe                                                             |
-| [`/-/reload`](http://localhost:19090/-/reload)                   | POST to hot-reload `prometheus.yml` after a ConfigMap edit                 |
+| URL                                                                                                                            | What                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| [`/prometheus`](http://localhost:19090/prometheus)                                                                             | Prometheus UI (graph, alerts, status)                                      |
+| [`/prometheus/targets`](http://localhost:19090/prometheus/targets)                                                             | Scrape target health — should show 2 `up` (app pod + Prometheus self-scrape) |
+| [`/prometheus/graph?g0.expr=flask_http_request_total`](http://localhost:19090/prometheus/graph?g0.expr=flask_http_request_total) | Quick graph: HTTP request counter                                       |
+| [`/prometheus/-/healthy`](http://localhost:19090/prometheus/-/healthy)                                                         | Liveness probe                                                             |
+| [`/prometheus/-/reload`](http://localhost:19090/prometheus/-/reload)                                                           | POST to hot-reload `prometheus.yml` after a ConfigMap edit                 |
 
-**Grafana** — `http://localhost:13000` (login `admin` / `admin`, change in [50-grafana-secret.yaml](k8s/50-grafana-secret.yaml) before exposing)
+**Grafana** — `http://localhost:13000/grafana` (login `admin` / `admin`, change in [50-grafana-secret.yaml](k8s/50-grafana-secret.yaml) before exposing). Served from a subpath because [53-grafana.yaml](k8s/53-grafana.yaml) sets `GF_SERVER_SERVE_FROM_SUB_PATH=true`.
 
-| URL                                                                                            | What                                                            |
-| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [`/`](http://localhost:13000/)                                                                 | Grafana home (redirects to login)                               |
-| [`/d/codeplex-ai/codeplex-ai`](http://localhost:13000/d/codeplex-ai/codeplex-ai)               | Direct link to the auto-provisioned "Codeplex AI" dashboard      |
-| [`/dashboards`](http://localhost:13000/dashboards)                                             | All dashboards (find under the **Codeplex** folder)             |
-| [`/datasources`](http://localhost:13000/datasources)                                           | Datasource config — Prometheus is auto-provisioned at startup   |
-| [`/api/health`](http://localhost:13000/api/health)                                             | Health endpoint                                                  |
+| URL                                                                                                          | What                                                            |
+| ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| [`/grafana`](http://localhost:13000/grafana)                                                                 | Grafana home (redirects to login)                               |
+| [`/grafana/d/codeplex-ai/codeplex-ai`](http://localhost:13000/grafana/d/codeplex-ai/codeplex-ai)             | Direct link to the auto-provisioned "Codeplex AI" dashboard    |
+| [`/grafana/dashboards`](http://localhost:13000/grafana/dashboards)                                           | All dashboards (find under the **Codeplex** folder)             |
+| [`/grafana/datasources`](http://localhost:13000/grafana/datasources)                                         | Datasource config — Prometheus is auto-provisioned at startup   |
+| [`/grafana/api/health`](http://localhost:13000/grafana/api/health)                                           | Health endpoint                                                  |
 
 The dashboard panels populate as you generate traffic — hit `/api/models` or play in the web UI a few times, then refresh Grafana to see the request rate and latency graphs move.
 
@@ -640,6 +684,15 @@ For production behind nginx, see [nginx.conf](nginx.conf) — proxies `/api/*` t
 | `source venv/bin/activate` fails on Windows | That's a Linux path. Use `venv\Scripts\activate.bat` on cmd, or just call `.\venv\Scripts\python.exe` directly without activating. |
 | Redis connection failures in logs | Expected if you're not running Redis. The cache falls back to in-memory automatically — ignore unless you need persistence across restarts. |
 | Browser shows 404 at `http://localhost:8000/` | Old version. The current build serves a homepage at `/` — pull the latest `master`. |
+| `ImagePullBackOff` on dev pod with `failed to fetch anonymous token: 403` | The image registry blocks anonymous pulls. [configurations.yaml](.github/variables/configurations.yaml) `IMAGE_REPOSITORY` should point at a public registry — defaults to `docker.io/luniemma/codeplex.ai`. If you switch back to GHCR, the package's visibility must be public, or you need an `imagePullSecrets`. |
+| `ImagePullBackOff` with full 40-char SHA tag like `:9f8d444ea8ee...` | The image is published as `:sha-<12 chars>`, not the full SHA. The deploy workflow's `runtime` job computes the right tag — confirm `image_tag_default` is being passed (not raw `${{ github.sha }}`). |
+| Helm error `another operation (install/upgrade/rollback) is in progress` | Previous deploy hit `--atomic --wait` timeout and left the release in `pending-install`/`pending-upgrade`. The deploy workflow's "Recover from stuck Helm release" step handles this automatically — if you hit it locally, `helm uninstall codeplex-ai -n <ns>` and re-deploy. |
+| Helm `--wait` times out → atomic rollback → "Release does not exist" | Pods aren't reaching Ready in 10 min. Usually `/readyz` returning 503 because no provider key is set. Create `codeplex-ai-real-secrets` (see [Provider keys](#provider-keys)) or accept the dev placeholder. |
+| `ANTHROPIC_API_KEY is not configured` (or similar) in the playground | The dev placeholder only satisfies `/readyz` — actual provider calls still fail. Create real keys in `codeplex-ai-real-secrets` per [Provider keys](#provider-keys), then `helm upgrade` to roll the deployment. |
+| Workflow run summary shows "Ingress has no LB address yet" + port-forward fallback | nginx-ingress controller's NLB is `<pending>`. Either AWS account ELB block (open Support ticket), or subnets aren't tagged for ELB discovery (`kubernetes.io/role/elb: "1"` + `kubernetes.io/cluster/codeplex-eks: shared`). |
+| Local `kubectl` returns `the server has asked for the client to provide credentials` | Your IAM principal isn't in the cluster's access entries. Add to `cluster_admin_principals` in the infra repo's [variables.tf](../terraform-aws-ec2/variables.tf) and re-apply, or temporarily `aws eks create-access-entry` via CLI. |
+| Smoke test fails with `curl: (7) Failed to connect to grafana...` | The shared Ingress + monitoring overlay didn't come up — the deploy step before it failed. Check Helm release status, pod events, and the Helm chart's Service selector matches the kustomize `commonLabels`. |
+| Prometheus pod in `CrashLoopBackOff` with logs ending "exiting gracefully" | Liveness/readiness probe path mismatch. With `--web.route-prefix=/prometheus`, probes must target `/prometheus/-/healthy` and `/prometheus/-/ready`, not `/-/healthy`. |
 
 ---
 
