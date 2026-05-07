@@ -333,6 +333,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <nav class="primary">
     <a href="/" class="active">Playground</a>
     <a href="/about">About</a>
+    <a href="/stories">Stories</a>
+    <a href="/roadmap">Roadmap</a>
     <a href="/architecture">Architecture</a>
     <a href="/status">Status</a>
   </nav>
