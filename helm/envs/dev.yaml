@@ -3,6 +3,21 @@
 
 replicaCount: 1
 
+# /readyz returns 200 only if at least one provider key is non-empty and
+# doesn't start with "your_". Dev gets a placeholder so pods pass readiness
+# without needing real keys committed to git. Outbound API calls will return
+# auth errors when exercised — that's expected for dev. Stand up a real
+# Secret out-of-band and switch to existingSecret if dev needs real calls.
+secrets:
+  create: true
+  existingSecret: ""
+  values:
+    OPENAI_API_KEY: ""
+    ANTHROPIC_API_KEY: ""
+    GOOGLE_API_KEY: "dev-placeholder-not-a-real-key"
+    SECRET_KEY: "dev-secret-key-not-for-production"
+    JWT_SECRET: "dev-jwt-secret-not-for-production"
+
 config:
   ENVIRONMENT: development
   DEBUG: "True"

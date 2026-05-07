@@ -276,6 +276,30 @@ jobs:
           # Server-side dry run shows what would actually change in-cluster.
           kubectl diff -f /tmp/rendered.yaml || true
 
+      # If a previous deploy hit the timeout mid-rollback, the release can
+      # be left in pending-install/pending-upgrade/pending-rollback. Helm's
+      # next `upgrade --install` then refuses with "another operation in
+      # progress." Detect that state and recover before retrying so a single
+      # bad deploy doesn't wedge the namespace.
+      - name: Recover from stuck Helm release
+        if: inputs.method == 'helm' && inputs.dry_run == false
+        shell: bash
+        env:
+          RELEASE: ${{ inputs.release_name }}
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          status=$(helm status "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.info.status' || true)
+          case "${status:-}" in
+            pending-install|pending-upgrade|pending-rollback)
+              echo "::warning::Release $RELEASE in '$status' — uninstalling before retry to clear the lock"
+              helm uninstall "$RELEASE" -n "$NAMESPACE" --wait --timeout 5m || true ;;
+            "")
+              echo "No existing release; first install." ;;
+            *)
+              echo "Existing release status: $status — proceeding with upgrade." ;;
+          esac
+
       - name: Helm upgrade --install
         if: inputs.method == 'helm' && inputs.dry_run == false
         id: helm-deploy
