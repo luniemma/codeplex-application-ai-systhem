@@ -374,6 +374,15 @@ jobs:
           # `kustomize edit set namespace` rewrites metadata.namespace AND
           # RoleBinding subjects.namespace to the env-scoped namespace.
           (cd k8s/monitoring && kustomize edit set namespace "$NAMESPACE")
+
+          # nginx-ingress's admission webhook treats Ingress routing rules
+          # cluster-wide: two Ingresses on the same host:""+path conflict
+          # across namespaces. Give each env its own host header by replacing
+          # the placeholder in ingress.yaml with "<namespace>.codeplex.local".
+          host="${NAMESPACE}.codeplex.local"
+          sed -i "s/namespace-host\.codeplex\.local/${host}/g" k8s/monitoring/ingress.yaml
+          echo "Rewrote Ingress host → ${host}"
+
           # `kubectl apply -k` hits kustomize's strict security mode, which
           # refuses resources outside the kustomization root (we use ../ refs
           # to share files with k8s/kustomization.yaml). Build with the load

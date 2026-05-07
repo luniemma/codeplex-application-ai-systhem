@@ -1,8 +1,16 @@
 # Shared Ingress fronting the app, Prometheus, and Grafana behind one NLB.
 #
-# Routing is path-based (no DNS required — the NLB hostname is whatever AWS
-# hands out at provision time):
+# nginx-ingress treats Ingress routing rules as cluster-scoped: two Ingresses
+# in different namespaces but sharing the same host:"" (matches all) + path
+# trip its admission webhook. So each env's Ingress claims its own Host
+# header. The deploy workflow rewrites NAMESPACE_HOST to "<ns>.codeplex.local"
+# (e.g. codeplex-dev.codeplex.local) per env at apply time.
 #
+# When the AWS account ELB block lifts and the NLB has a real DNS, point
+# codeplex-{dev,qa,staging,prod}.codeplex.local at it via Route 53 (or local
+# /etc/hosts for testing). Until then port-forward bypasses Ingress entirely.
+#
+# Routing is path-based on each per-env host:
 #   /            → codeplex-ai           : 8000   (the app)
 #   /prometheus  → prometheus            : 9090
 #   /grafana     → grafana               : 3000
@@ -11,9 +19,6 @@
 # that subpath natively. Grafana runs with GF_SERVER_SERVE_FROM_SUB_PATH=true
 # and GF_SERVER_ROOT_URL=/grafana for the same reason. So nginx does NOT
 # rewrite paths — it just routes — and the apps handle their own subpath.
-#
-# The app at "/" is Helm-managed; this Ingress only references its Service by
-# name (codeplex-ai), which Helm creates from the release name.
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -25,7 +30,11 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - http:
+    # Host is rewritten per-env at deploy time. The placeholder
+    # "namespace-host.codeplex.local" is DNS-1123 compliant (so static validators
+    # accept it) and the deploy workflow sed-substitutes it for "<ns>.codeplex.local".
+    - host: namespace-host.codeplex.local
+      http:
         paths:
           - path: /prometheus
             pathType: Prefix
