@@ -374,7 +374,12 @@ jobs:
           # `kustomize edit set namespace` rewrites metadata.namespace AND
           # RoleBinding subjects.namespace to the env-scoped namespace.
           (cd k8s/monitoring && kustomize edit set namespace "$NAMESPACE")
-          kubectl apply -k k8s/monitoring/ --server-side
+          # `kubectl apply -k` hits kustomize's strict security mode, which
+          # refuses resources outside the kustomization root (we use ../ refs
+          # to share files with k8s/kustomization.yaml). Build with the load
+          # restrictor relaxed and pipe to apply explicitly.
+          kustomize build --load-restrictor=LoadRestrictionsNone k8s/monitoring/ \
+            | kubectl apply --server-side -f -
           # Wait for the Ingress to bind a load balancer hostname (nginx-ingress
           # picks up the controller's NLB on first reconcile).
           kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.loadBalancer.ingress}' \
