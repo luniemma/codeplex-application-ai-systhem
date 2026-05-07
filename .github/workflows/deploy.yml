@@ -405,6 +405,7 @@ jobs:
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           REF: ${{ github.ref }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
           case "$ENVIRONMENT" in
@@ -419,4 +420,16 @@ jobs:
             dev|staging) ;;
             *) echo "::error::unknown environment: $ENVIRONMENT"; exit 1 ;;
           esac
-          echo "Promotion policy OK: $ENVIRONMENT from $REF"
+
+          # staging/prod must pin an image — never deploy a floating tag like
+          # 'latest' or whatever happens to be at HEAD. dev/qa fall back to
+          # github.sha in the manual job's `with:` block.
+          case "$ENVIRONMENT" in
+            staging|prod)
+              if [[ -z "$IMAGE_TAG" ]]; then
+                echo "::error::image_tag is required for $ENVIRONMENT — pin a commit SHA or sha256:... digest"
+                exit 1
+              fi ;;
+          esac
+
+          echo "Promotion policy OK: $ENVIRONMENT from $REF (image_tag=${IMAGE_TAG:-<github.sha fallback>})"
