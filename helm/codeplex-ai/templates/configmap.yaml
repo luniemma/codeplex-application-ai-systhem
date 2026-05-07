@@ -6,10 +6,17 @@ metadata:
     {{- include "codeplex-ai.labels" . | nindent 4 }}
 data:
   {{- /* Render every config key as a string. The REDIS_URL is computed so
-         the bundled-Redis case Just Works without operator intervention. */}}
+         the bundled-Redis case Just Works without operator intervention.
+         APP_VERSION is overridden from the image tag (or Chart.AppVersion
+         if no tag is set) so the pill in the header reflects what's actually
+         running, not a hardcoded default — values.yaml override still wins. */}}
   {{- $resolvedRedis := include "codeplex-ai.redisUrl" . -}}
+  {{- $derivedVersion := default .Chart.AppVersion .Values.image.tag -}}
   {{- range $k, $v := .Values.config }}
   {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.config "APP_VERSION") }}
+  APP_VERSION: {{ $derivedVersion | quote }}
   {{- end }}
   {{- if $resolvedRedis }}
   REDIS_URL: {{ $resolvedRedis | quote }}
