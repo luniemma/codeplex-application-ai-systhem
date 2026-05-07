@@ -80,6 +80,13 @@ INDEX_HTML = r"""<!DOCTYPE html>
     box-shadow: 0 6px 24px rgba(107, 140, 255, 0.35); flex-shrink: 0; }
   .brand-name { background: linear-gradient(135deg, var(--text), var(--muted));
     -webkit-background-clip: text; background-clip: text; color: transparent; }
+  nav.primary { display: flex; gap: 6px; flex-wrap: wrap; }
+  nav.primary a {
+    font-size: 14px; padding: 8px 14px; border-radius: 8px; color: var(--muted);
+    text-decoration: none; transition: background 0.15s, color 0.15s;
+  }
+  nav.primary a:hover { background: var(--panel); color: var(--text); }
+  nav.primary a.active { background: var(--panel); color: var(--accent); }
   .header-right { display: flex; gap: 10px; align-items: center; }
   .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px;
     background: rgba(107, 140, 255, 0.15); border: 1px solid rgba(107, 140, 255, 0.4);
@@ -323,6 +330,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
     </svg>
     <span class="brand-name">{{ app_name }}</span>
   </div>
+  <nav class="primary">
+    <a href="/" class="active">Playground</a>
+    <a href="/about">About</a>
+    <a href="/architecture">Architecture</a>
+    <a href="/status">Status</a>
+  </nav>
   <div class="header-right">
     <span class="pill">v{{ version }}</span>
     <button id="theme-toggle" class="icon-btn" title="Toggle theme (dark/light)" aria-label="Toggle theme">

@@ -179,12 +179,14 @@ def create_app():
     except ImportError as e:
         logger.warning("prometheus-flask-exporter not installed — /metrics disabled (%s)", e)
 
+    from app.pages import pages_bp
     from app.routes import api_bp, health_bp
     from app.web import web_bp
 
     app.register_blueprint(api_bp)
     app.register_blueprint(health_bp)
     app.register_blueprint(web_bp)
+    app.register_blueprint(pages_bp)
 
     # Per-blueprint rate limits — tighter than the global default for the
     # AI endpoints since each call costs real money. Applied after the
