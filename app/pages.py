@@ -643,12 +643,11 @@ _ROADMAP_BODY = (
     "<a href='https://github.com/luniemma/codeplex-application-ai-systhem/blob/master/app/pages.py' style='color:var(--accent)'>app/pages.py</a> "
     "(the <code>ROADMAP</code> list) to change what's shown here.</p>"
     + "".join(
-
-            (
-                f"<h2>{section_label}</h2>"
-                "<div class='card' style='padding:0'>"
-                + "".join(
-                    f"""
+        (
+            f"<h2>{section_label}</h2>"
+            "<div class='card' style='padding:0'>"
+            + "".join(
+                f"""
                     <div style="padding:18px 24px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:16px">
                       <span class="badge {_BADGE[s][0]}" style="white-space:nowrap;margin-top:2px">{_BADGE[s][1]}</span>
                       <div>
@@ -657,19 +656,18 @@ _ROADMAP_BODY = (
                       </div>
                     </div>
                     """
-                    for (title, s, detail) in ROADMAP
-                    if s == bucket
-                )
-                + "</div>"
+                for (title, s, detail) in ROADMAP
+                if s == bucket
             )
-            for (bucket, section_label) in [
-                ("in_progress", "In progress"),
-                ("blocked", "Blocked"),
-                ("planned", "Planned"),
-                ("done", "Done"),
-            ]
-            if any(s == bucket for (_, s, _) in ROADMAP)
-
+            + "</div>"
+        )
+        for (bucket, section_label) in [
+            ("in_progress", "In progress"),
+            ("blocked", "Blocked"),
+            ("planned", "Planned"),
+            ("done", "Done"),
+        ]
+        if any(s == bucket for (_, s, _) in ROADMAP)
     )
 )
 
