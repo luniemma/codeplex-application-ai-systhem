@@ -2,6 +2,14 @@
 
 replicaCount: 1
 
+# Provider keys come from a Kubernetes Secret in the codeplex-qa namespace,
+# created out-of-band (kubectl create secret) — never plaintext in git.
+# See helm/envs/dev.yaml for the bootstrap command, then re-run with
+# --namespace codeplex-qa.
+secrets:
+  create: false
+  existingSecret: codeplex-ai-real-secrets
+
 config:
   ENVIRONMENT: qa
   DEBUG: "False"

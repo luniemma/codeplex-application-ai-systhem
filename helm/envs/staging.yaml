@@ -3,6 +3,14 @@
 
 replicaCount: 2
 
+# Provider keys come from a Kubernetes Secret in the codeplex-staging namespace,
+# created out-of-band (kubectl create secret) — never plaintext in git.
+# See helm/envs/dev.yaml for the bootstrap command, then re-run with
+# --namespace codeplex-staging.
+secrets:
+  create: false
+  existingSecret: codeplex-ai-real-secrets
+
 config:
   ENVIRONMENT: staging
   DEBUG: "False"

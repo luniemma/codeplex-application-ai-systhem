@@ -46,7 +46,7 @@ ingress:
 # External Secrets, sops, etc.) — never plaintext in this overlay.
 secrets:
   create: false
-  existingSecret: codeplex-ai-secrets
+  existingSecret: codeplex-ai-real-secrets
 
 # In prod, prefer a managed Redis (ElastiCache) — disable bundled single-node.
 redis:
