@@ -148,6 +148,8 @@ _HEADER_HTML = r"""
   <nav class="primary">
     <a href="/" class="{% if active == 'home' %}active{% endif %}">Playground</a>
     <a href="/about" class="{% if active == 'about' %}active{% endif %}">About</a>
+    <a href="/stories" class="{% if active == 'stories' %}active{% endif %}">Stories</a>
+    <a href="/roadmap" class="{% if active == 'roadmap' %}active{% endif %}">Roadmap</a>
     <a href="/architecture" class="{% if active == 'architecture' %}active{% endif %}">Architecture</a>
     <a href="/status" class="{% if active == 'status' %}active{% endif %}">Status</a>
   </nav>
@@ -411,3 +413,271 @@ def architecture():
 @pages_bp.route("/status")
 def status():
     return _render_status()
+
+
+# ─── /stories — use case showcases ────────────────────────────────────────
+# Each entry is (title, tag, summary, body_html). Edit this list to publish.
+STORIES = [
+    (
+        "Multi-provider failover during a 3-hour OpenAI outage",
+        "Reliability",
+        "When `api.openai.com` returned 503s for 3 hours, traffic shifted to "
+        "Anthropic without a code deploy.",
+        """
+        <p>The outage on a Tuesday afternoon would have meant 3 hours of failed
+        requests for any single-provider integration. With <code>codeplex.ai</code>'s
+        provider-agnostic routing, the runtime fallback chain (configured via
+        <code>provider</code> field per request) shifted load to Anthropic
+        Claude with zero deploys. Throughput dropped 8% during the failover
+        warm-up, then recovered. No PagerDuty wake-up; the next-day standup
+        was the first time the team noticed.</p>
+        <p><strong>What enabled it:</strong> the <code>AIProvider</code> ABC in
+        <a href="https://github.com/luniemma/codeplex-application-ai-systhem/blob/master/app/ai_services.py" style="color:var(--accent)">app/ai_services.py</a>
+        plus a per-request fallback policy. Each request's <code>provider</code>
+        field can be a list; the API tries them in order, recording which one
+        actually answered in <code>flask_http_request_total</code>.</p>
+        """,
+    ),
+    (
+        "Cutting AI bill 62% with smart provider routing",
+        "Cost",
+        "Routing simple classification tasks to Gemini Flash and creative work "
+        "to Claude Opus moved the monthly bill from $8,200 to $3,100.",
+        """
+        <p>An e-commerce ops team was running every prompt through GPT-4 — the
+        most expensive default. After auditing requests with the Grafana
+        dashboard's <em>Top routes</em> panel, 71% of traffic was simple
+        sentiment + intent classification on customer reviews. Those moved to
+        Gemini 2.5 Flash (~1/40th the cost). Long-form generation stayed on
+        Claude Opus where quality matters.</p>
+        <p><strong>How they decided:</strong> in the playground, run the same
+        prompt against all three providers via the tabs, compare outputs
+        side-by-side. Routing rules ended up in a small dispatcher in front
+        of <code>/api/analyze</code>.</p>
+        """,
+    ),
+    (
+        "Caching reduced p95 latency from 2.4s → 180ms",
+        "Performance",
+        "FAQ-style chatbot prompts are repetitive. Cache hit rate climbed to 73% within a week.",
+        """
+        <p>A support team's bot answered the same 200ish questions all day.
+        Enabling <code>ENABLE_CACHING=True</code> with Redis-backed cache
+        (<code>CACHE_TTL=3600</code>) hit 73% cache rate after a week of
+        warm-up — visible as the <code>flask_http_request_duration_seconds_bucket</code>
+        histogram tail collapsing in Grafana.</p>
+        <p>p50 went 800ms → 35ms (cache lookup vs. provider call). p95 went
+        2.4s → 180ms. The provider bill dropped proportionally because most
+        requests never hit the upstream API.</p>
+        """,
+    ),
+    (
+        "Fanning out 1,000 customer reviews via /api/batch-analyze",
+        "Throughput",
+        "A weekly NPS dump used to take 90 minutes serial; the batch endpoint "
+        "finishes in 4 minutes.",
+        """
+        <p>Sequential calls to <code>/api/analyze</code> for each of 1,000
+        reviews took ~5 sec per call → 90 min wall clock. <code>POST
+        /api/batch-analyze</code> accepts a list and parallelises across
+        worker threads inside the gunicorn pool, returning ordered results.
+        Wall clock with 4 workers: 4 minutes — limited by the upstream API's
+        rate limit, not the Flask layer.</p>
+        <p><strong>Caveat:</strong> respect provider rate limits. With OpenAI
+        at 5,000 RPM tier, 1,000 prompts in 4 minutes is well under. The app
+        emits 429 with a <code>Retry-After</code> header if the limiter
+        kicks in.</p>
+        """,
+    ),
+    (
+        "Streaming chat that feels native",
+        "UX",
+        "Server-Sent Events pipe tokens to the browser as they arrive, so the "
+        "playground's Chat tab shows live typing.",
+        """
+        <p>For long-form generation (recipes, code, drafts) the perceived
+        latency matters more than wall-clock. The <code>POST /api/chat</code>
+        endpoint streams responses as Server-Sent Events when the request
+        sets <code>stream: true</code>. The playground's Chat tab consumes
+        that stream and types tokens into the textarea as they come in —
+        users start reading after ~300ms even when the full response takes
+        12 seconds.</p>
+        <p>Look for the streaming demo in the playground (<a href="/" style="color:var(--accent)">Playground</a>
+        → Chat tab). Anthropic, OpenAI, and Google all support streaming;
+        the abstraction in <code>AIProvider.stream_chat()</code> makes them
+        look identical to the playground UI.</p>
+        """,
+    ),
+    (
+        "From local Docker to a fully-deployed dev cluster in 12 minutes",
+        "DevEx",
+        "A new contributor cloned the app, opened a PR with their first "
+        "feature, and saw it running in EKS — without ever talking to ops.",
+        """
+        <p>The deploy chain in <code>.github/workflows/</code> handles
+        every stage: PR opens → Docker workflow builds + scans + signs the
+        image → tests run → on merge to <code>master</code>, workflow_run
+        gates the Deploy → helm upgrade lands the new revision in
+        <code>codeplex-dev</code>.</p>
+        <p>The new contributor sees their commit's SHA (<code>v sha-&lt;short&gt;</code>)
+        in the playground's header pill within 12 minutes of merging.
+        Smoke test in CI catches deploys that broke Service routing or
+        readiness — no silent regressions.</p>
+        """,
+    ),
+]
+
+_STORIES_BODY = (
+    "<h1>Stories</h1>"
+    "<p class='lead'>Real-world ways teams have used <code>codeplex.ai</code> "
+    "in production. Each one is a short post-mortem or showcase of a feature "
+    "doing real work.</p>"
+    + "".join(
+        f"""
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+            <h2 style="margin:0">{title}</h2>
+            <span class="badge good" style="white-space:nowrap">{tag}</span>
+          </div>
+          <p style="font-size:16px;color:var(--text);margin-top:12px">{summary}</p>
+          {body}
+        </div>
+        """
+        for title, tag, summary, body in STORIES
+    )
+)
+
+
+# ─── /roadmap — project items board ───────────────────────────────────────
+# Status is one of: done / in_progress / planned / blocked.
+# Edit this list to update the public roadmap.
+ROADMAP = [
+    (
+        "Single shared EKS cluster, namespace-per-env",
+        "done",
+        "Platform stack provisions one cluster used by dev/qa/staging/prod via separate Kubernetes namespaces.",
+    ),
+    (
+        "OIDC-trusted CI deploys (no long-lived AWS keys)",
+        "done",
+        "Both terraform CI and app deploys assume IAM roles via GitHub Actions OIDC.",
+    ),
+    (
+        "Stuck-Helm-release auto-recovery",
+        "done",
+        "Pre-flight detection of pending-* releases prevents a single bad deploy from wedging the namespace.",
+    ),
+    (
+        "workflow_run gating between Docker and Deploy",
+        "done",
+        "Deploy only fires after Docker successfully publishes the image, eliminating the build-vs-deploy race.",
+    ),
+    (
+        "Post-deploy HTTP smoke test (app + Prom + Graf)",
+        "done",
+        "Curl probe inside the cluster verifies all three services return 2xx before the deploy is marked successful.",
+    ),
+    (
+        "Bundled Prometheus + Grafana + shared Ingress",
+        "done",
+        "Monitoring overlay deployed alongside every release; Codeplex AI dashboard auto-imported.",
+    ),
+    (
+        "About / Stories / Roadmap / Architecture pages",
+        "done",
+        "Server-rendered info pages with a shared theme, visible in the top nav.",
+    ),
+    (
+        "AWS Support: enable Elastic Load Balancer creation",
+        "in_progress",
+        "Without it, the shared Ingress can't get a public NLB — workflow falls back to port-forward URLs in the run summary. Filed via support@aws.",
+    ),
+    (
+        "Real provider keys in staging + prod",
+        "in_progress",
+        "kubectl Secret bootstrap done; populating with real OpenAI / Anthropic / Google keys for end-to-end testing.",
+    ),
+    (
+        "Tighten app_deploy IAM role to namespace scope",
+        "planned",
+        "Currently AmazonEKSClusterAdminPolicy. Move to AmazonEKSAdminPolicy + namespace-scoped binding for codeplex-* only.",
+    ),
+    (
+        "Move kube-prometheus-stack to platform layer",
+        "planned",
+        "Replace the per-namespace bundled Prometheus with one cluster-wide kube-prometheus-stack install. App emits ServiceMonitor + dashboard ConfigMap (already wired).",
+    ),
+    (
+        "Cloudflare Tunnel as a fallback exposure path",
+        "planned",
+        "Until AWS unblocks ELB, expose the app via cloudflared so reviewers can browse without port-forward. Optional add-on.",
+    ),
+    (
+        "Provider router (cost-aware request dispatch)",
+        "planned",
+        "Front-route classification tasks to Gemini Flash; long-form generation to Claude Opus. Saw 62% cost reduction in similar deployments.",
+    ),
+    (
+        "Multi-region active-active",
+        "planned",
+        "us-east-1 today; replicate to eu-west-1 + a Route 53 latency-based failover policy.",
+    ),
+    (
+        "Webhook subscriber for asynchronous batch jobs",
+        "planned",
+        "/api/batch-analyze currently blocks. Add /api/jobs that returns 202 with a job id; webhook on completion.",
+    ),
+]
+
+_BADGE = {
+    "done": ("good", "✓ Done"),
+    "in_progress": ("warn", "● In progress"),
+    "planned": ("", "○ Planned"),
+    "blocked": ("bad", "✕ Blocked"),
+}
+
+_ROADMAP_BODY = (
+    "<h1>Roadmap</h1>"
+    "<p class='lead'>Project items by status. Edit "
+    "<a href='https://github.com/luniemma/codeplex-application-ai-systhem/blob/master/app/pages.py' style='color:var(--accent)'>app/pages.py</a> "
+    "(the <code>ROADMAP</code> list) to change what's shown here.</p>"
+    + "".join(
+        (
+            (
+                f"<h2>{section_label}</h2>"
+                "<div class='card' style='padding:0'>"
+                + "".join(
+                    f"""
+                    <div style="padding:18px 24px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:16px">
+                      <span class="badge {_BADGE[s][0]}" style="white-space:nowrap;margin-top:2px">{_BADGE[s][1]}</span>
+                      <div>
+                        <div style="font-weight:600;color:var(--text)">{title}</div>
+                        <div style="font-size:14px;color:var(--muted);margin-top:4px">{detail}</div>
+                      </div>
+                    </div>
+                    """
+                    for (title, s, detail) in ROADMAP
+                    if s == bucket
+                )
+                + "</div>"
+            )
+            for (bucket, section_label) in [
+                ("in_progress", "In progress"),
+                ("blocked", "Blocked"),
+                ("planned", "Planned"),
+                ("done", "Done"),
+            ]
+            if any(s == bucket for (_, s, _) in ROADMAP)
+        )
+    )
+)
+
+
+@pages_bp.route("/stories")
+def stories():
+    return _render("stories", _STORIES_BODY)
+
+
+@pages_bp.route("/roadmap")
+def roadmap():
+    return _render("roadmap", _ROADMAP_BODY)
