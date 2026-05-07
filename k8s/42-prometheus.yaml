@@ -71,13 +71,15 @@ spec:
               memory: 768Mi
           livenessProbe:
             httpGet:
-              path: /-/healthy
+              # --web.route-prefix=/prometheus moves all built-in endpoints
+              # (including /-/healthy and /-/ready) under that prefix.
+              path: /prometheus/-/healthy
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /-/ready
+              path: /prometheus/-/ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
