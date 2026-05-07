@@ -125,6 +125,11 @@ jobs:
       prod_namespace:           ${{ steps.load.outputs.prod_namespace }}
       prod_image_repository:    ${{ steps.load.outputs.prod_image_repository }}
       prod_values_files:        ${{ steps.load.outputs.prod_values_files }}
+      # `sha-<12char>` matches what build-docker.yml publishes as the per-commit
+      # tag (alongside `latest`). Use this everywhere the auto/dispatch paths
+      # default to the current commit, instead of github.sha — that 40-char form
+      # is never tagged on the registry.
+      image_tag_default:        ${{ steps.load.outputs.image_tag_default }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -132,6 +137,8 @@ jobs:
 
       - id: load
         shell: bash
+        env:
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           f=.github/variables/configurations.yaml
@@ -154,6 +161,9 @@ jobs:
               echo "${out}=${val}" >> "$GITHUB_OUTPUT"
             done
           done
+
+          short_sha="${GITHUB_SHA:0:12}"
+          echo "image_tag_default=sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
   # PR preview — render + server-side diff, no apply.
   # Targets staging when the PR is into a release/* branch (since a merge
@@ -229,7 +239,7 @@ jobs:
       release_name: codeplex-ai
       values_files:     ${{ needs.config.outputs.dev_values_files }}
       image_repository: ${{ needs.config.outputs.dev_image_repository }}
-      image_tag: ${{ github.sha }}
+      image_tag:        ${{ needs.config.outputs.image_tag_default }}
       wait_for_workload: deployment/codeplex-ai
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -253,7 +263,7 @@ jobs:
       release_name: codeplex-ai
       values_files:     ${{ needs.config.outputs.staging_values_files }}
       image_repository: ${{ needs.config.outputs.staging_image_repository }}
-      image_tag: ${{ github.sha }}
+      image_tag:        ${{ needs.config.outputs.image_tag_default }}
       wait_for_workload: deployment/codeplex-ai
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -291,9 +301,10 @@ jobs:
       values_files:     ${{ inputs.environment == 'prod' && needs.config.outputs.prod_values_files     || inputs.environment == 'staging' && needs.config.outputs.staging_values_files     || inputs.environment == 'qa' && needs.config.outputs.qa_values_files     || needs.config.outputs.dev_values_files }}
       kustomize_path: k8s
       image_repository: ${{ inputs.environment == 'prod' && needs.config.outputs.prod_image_repository || inputs.environment == 'staging' && needs.config.outputs.staging_image_repository || inputs.environment == 'qa' && needs.config.outputs.qa_image_repository || needs.config.outputs.dev_image_repository }}
-      # dev/qa let blank image_tag fall back to the current ref SHA. staging/prod
-      # require an explicit pin — manual_policy_check fails the run if blank.
-      image_tag: ${{ inputs.image_tag != '' && inputs.image_tag || github.sha }}
+      # dev/qa let blank image_tag fall back to image_tag_default (sha-<short>).
+      # staging/prod require an explicit pin — manual_policy_check fails the
+      # run if blank.
+      image_tag: ${{ inputs.image_tag != '' && inputs.image_tag || needs.config.outputs.image_tag_default }}
       wait_for_workload: deployment/codeplex-ai
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -343,11 +354,12 @@ jobs:
           case "$METHOD" in helm|kustomize) ;; *) echo "::error::method must be helm|kustomize (got '$METHOD')"; exit 1 ;; esac
 
           # image_tag defaults to dispatch payload's value; if blank, fall back
-          # to the SHA of the default branch at trigger time. The infra run id
+          # to sha-<12char> of the current ref — this matches what
+          # build-docker.yml publishes as the per-commit tag. The infra run id
           # is *not* a valid image tag, so don't substitute that.
           if [[ -z "${IMAGE_TAG:-}" ]]; then
-            IMAGE_TAG="${{ github.sha }}"
-            echo "::notice::image_tag not provided in payload; using current ref SHA $IMAGE_TAG"
+            IMAGE_TAG="sha-${GITHUB_SHA:0:12}"
+            echo "::notice::image_tag not provided in payload; using current ref tag $IMAGE_TAG"
           fi
 
           {
