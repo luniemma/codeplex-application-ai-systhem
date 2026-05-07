@@ -11,26 +11,26 @@ dev:
   AWS_REGION: us-east-1
   EKS_CLUSTER_NAME: codeplex-eks
   K8S_NAMESPACE: codeplex-dev
-  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-application-ai-systhem
   VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/dev.yaml
 
 qa:
   AWS_REGION: us-east-1
   EKS_CLUSTER_NAME: codeplex-eks
   K8S_NAMESPACE: codeplex-qa
-  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-application-ai-systhem
   VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/qa.yaml
 
 staging:
   AWS_REGION: us-east-1
   EKS_CLUSTER_NAME: codeplex-eks
   K8S_NAMESPACE: codeplex-staging
-  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-application-ai-systhem
   VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/staging.yaml
 
 prod:
   AWS_REGION: us-east-1
   EKS_CLUSTER_NAME: codeplex-eks
   K8S_NAMESPACE: codeplex-prod
-  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-application-ai-systhem
   VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/prod.yaml
