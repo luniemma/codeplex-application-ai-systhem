@@ -33,21 +33,13 @@
 name: Deploy
 
 on:
-  push:
-    branches:
-      - master
-      - main
-      - "feature/**"
-      - "release/**"
-    paths:
-      - "helm/**"
-      - "k8s/**"
-      - "app/**"
-      - "main.py"
-      - "Dockerfile"
-      - ".github/workflows/deploy.yml"
-      - ".github/workflows/deploy-eks.yml"
-      - ".github/variables/configurations.yaml"
+  # Auto-deploys are gated on a successful Docker build, NOT on push directly,
+  # so we never try to `helm upgrade` an image tag that hasn't finished pushing
+  # to the registry. auto_dev fires for master/main/feature/* runs of Docker;
+  # auto_staging fires for release/* runs. See the auto_* job `if:` blocks.
+  workflow_run:
+    workflows: ["Docker"]
+    types: [completed]
   pull_request:
     paths:
       - "helm/**"
@@ -138,7 +130,11 @@ jobs:
       - id: load
         shell: bash
         env:
-          GITHUB_SHA: ${{ github.sha }}
+          # When triggered by workflow_run (auto-deploys after Docker), github.sha
+          # points at the workflow file's commit, not the triggering build's
+          # commit. workflow_run.head_sha has the right value; fall back to
+          # github.sha for push/PR/dispatch paths.
+          GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
           f=.github/variables/configurations.yaml
@@ -215,13 +211,16 @@ jobs:
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
 
-  # Auto-deploy to dev on push to master/main or any feature/* branch.
+  # Auto-deploy to dev after a successful Docker build on master/main/feature/*.
+  # workflow_run guarantees the image tag we're about to deploy has already
+  # been pushed to the registry — no race with the build job.
   auto_dev:
     if: |
-      github.event_name == 'push' && (
-        github.ref == 'refs/heads/master' ||
-        github.ref == 'refs/heads/main' ||
-        startsWith(github.ref, 'refs/heads/feature/')
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' && (
+        github.event.workflow_run.head_branch == 'master' ||
+        github.event.workflow_run.head_branch == 'main' ||
+        startsWith(github.event.workflow_run.head_branch, 'feature/')
       )
     needs: config
     name: Deploy to dev
@@ -244,9 +243,12 @@ jobs:
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
 
-  # Auto-deploy to staging on push to any release/* branch.
+  # Auto-deploy to staging after a successful Docker build on any release/*.
   auto_staging:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    if: |
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'release/')
     needs: config
     name: Deploy to staging
     uses: ./.github/workflows/deploy-eks.yml
@@ -331,6 +333,8 @@ jobs:
           INFRA_RUN: ${{ github.event.client_payload.infrastructure_run_url }}
           TRIGGERED_BY: ${{ github.event.client_payload.triggered_by }}
           TRIGGERED_FROM: ${{ github.event.client_payload.triggered_from }}
+          # repository_dispatch event always sets GITHUB_SHA to default branch HEAD,
+          # which is the right value for the dispatch fallback.
         run: |
           set -euo pipefail
 
