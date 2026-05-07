@@ -1,0 +1,59 @@
+# Per-env overlay: prod namespace on the shared codeplex-eks cluster.
+#
+# NOTE: prod sharing the cluster with non-prod is a soft-isolation choice.
+# Mitigations to layer on top:
+#   * ResourceQuotas + LimitRanges on each namespace
+#   * Dedicated node group with taints (e.g. tier=prod:NoSchedule) and add a
+#     matching toleration here under .tolerations
+#   * NetworkPolicies that deny cross-namespace traffic by default
+
+replicaCount: 3
+
+config:
+  ENVIRONMENT: production
+  DEBUG: "False"
+  LOG_LEVEL: INFO
+  ENABLE_CACHING: "True"
+  ENABLE_RATE_LIMITING: "True"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 384Mi
+  limits:
+    cpu: 1500m
+    memory: 768Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+ingress:
+  enabled: true
+  hosts:
+    - host: codeplex.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Provider keys must come from out-of-band secrets in prod (Sealed Secrets,
+# External Secrets, sops, etc.) — never plaintext in this overlay.
+secrets:
+  create: false
+  existingSecret: codeplex-ai-secrets
+
+# In prod, prefer a managed Redis (ElastiCache) — disable bundled single-node.
+redis:
+  enabled: false
+
+serviceMonitor:
+  enabled: true
+
+grafanaDashboard:
+  enabled: true

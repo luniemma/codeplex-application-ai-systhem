@@ -1,0 +1,41 @@
+# Single-cluster, namespace-per-env entry point for the kustomize deploy path.
+#
+# The CI workflow (.github/workflows/deploy-eks.yml) runs
+#   kustomize edit set namespace "<env-namespace>"
+# before `kustomize build`, so this `namespace:` value is just a placeholder
+# that gets rewritten per environment. Kustomize rewrites:
+#   * metadata.namespace on all resources
+#   * RoleBinding/ClusterRoleBinding `subjects.namespace`
+#   * Other known cross-references (services, etc.)
+#
+# Limitation: arbitrary string content inside ConfigMap `data` (e.g. the
+# `namespaces.names` list inside prometheus.yml) is NOT rewritten. The bundled
+# prometheus/grafana stack in this directory is single-namespace by design;
+# in multi-env clusters, prefer the Helm chart's serviceMonitor +
+# grafanaDashboard support (driven by helm/envs/<env>.yaml).
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Placeholder — rewritten by `kustomize edit set namespace` in CI.
+namespace: codeplex-dev
+
+resources:
+  - 10-configmap.yaml
+  - 11-secret.example.yaml
+  - 20-redis.yaml
+  - 30-app-deployment.yaml
+  - 31-app-service.yaml
+  - 32-app-hpa.yaml
+  - 33-app-pdb.yaml
+  - 34-app-ingress.yaml
+  - 40-prometheus-rbac.yaml
+  - 41-prometheus-config.yaml
+  - 42-prometheus.yaml
+  - 50-grafana-secret.yaml
+  - 51-grafana-provisioning.yaml
+  - 52-grafana-dashboard.yaml
+  - 53-grafana.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: codeplex-ai

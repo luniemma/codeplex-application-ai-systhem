@@ -1,0 +1,419 @@
+# Caller workflow that delegates to deploy-eks.yml.
+#
+# Branching strategy → environment mapping:
+#
+#   feature/**   ─push→  dev
+#   master/main  ─push→  dev   ─manual promote→  qa
+#   release/**   ─push→  staging               ─manual promote→  prod
+#   pull_request ─diff→  dev (or staging if PR base is release/*)
+#
+# Per-environment values come from .github/variables/configurations.yaml — a
+# `config` job loads it with yq and exposes outputs that downstream jobs
+# consume. Anyone with merge access can change deploy targets, so CODEOWNERS
+# on .github/variables/ is recommended.
+#
+# The only thing still configured outside the repo is the deploy role:
+#
+#   Repo Secret:
+#     AWS_DEPLOY_ROLE_ARN — IAM role ARN with an OIDC trust policy for this repo.
+#                           Provisioned by aws-terraform-infra.
+#
+# GitHub Environments to create (Settings → Environments):
+#   dev      — no gates
+#   qa       — optional reviewers
+#   staging  — optional reviewers
+#   prod     — required reviewers + wait timer; deployment branches: release/*
+#
+# Soft promotion policy is enforced in the `manual` job's `if:` so that:
+#   * qa   can only be deployed from master/main
+#   * prod can only be deployed from release/*
+# Combine this with the GitHub Environment "deployment branches" setting for
+# defence-in-depth.
+
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - "feature/**"
+      - "release/**"
+    paths:
+      - "helm/**"
+      - "k8s/**"
+      - "app/**"
+      - "main.py"
+      - "Dockerfile"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/deploy-eks.yml"
+      - ".github/variables/configurations.yaml"
+  pull_request:
+    paths:
+      - "helm/**"
+      - "k8s/**"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/deploy-eks.yml"
+      - ".github/variables/configurations.yaml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (qa requires master/main; prod requires release/*)"
+        type: choice
+        required: true
+        default: qa
+        options: [dev, qa, staging, prod]
+      method:
+        description: "Deploy method"
+        type: choice
+        required: true
+        default: helm
+        options: [helm, kustomize]
+      image_tag:
+        description: "Image tag to deploy (commit SHA or sha256:... digest preferred)"
+        type: string
+        required: true
+  # External trigger from the infra repo (aws-terraform-infra / aks-terraform-iac).
+  # The infra workflow fires `event-type: deploy-app` after a successful apply.
+  # client_payload contract:
+  #   environment              required, one of: dev, qa, staging, prod
+  #   image_tag                optional, falls back to latest commit on default branch
+  #   method                   optional, "helm" | "kustomize", defaults to helm
+  #   skip_tests               optional bool (currently informational)
+  #   triggered_by             actor in the infra repo (audit only)
+  #   triggered_from           "owner/repo" of infra (audit only)
+  #   infrastructure_run       infra workflow run id (audit / cross-link)
+  #   infrastructure_run_url   full URL to the infra run
+  # Only `dev` is auto-applied via this path. qa/staging/prod still require the
+  # GitHub Environment's reviewers (configured in repo Settings → Environments).
+  repository_dispatch:
+    types: [deploy-app]
+
+# Cancel in-flight deploys for the same ref+env combo so we don't ship N-1
+# on top of N. `cancel-in-progress: false` for prod would be safer; the
+# matrix isn't worth the YAML complexity here.
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.environment || github.event.client_payload.environment || 'auto' }}
+  cancel-in-progress: false
+
+jobs:
+  # Loads .github/variables/configurations.yaml and exposes per-env values
+  # as job outputs, so downstream reusable-workflow `with:` blocks can pin
+  # to literal strings without hardcoding them in this file.
+  config:
+    name: Load config
+    runs-on: ubuntu-latest
+    outputs:
+      dev_aws_region:           ${{ steps.load.outputs.dev_aws_region }}
+      dev_cluster_name:         ${{ steps.load.outputs.dev_cluster_name }}
+      dev_namespace:            ${{ steps.load.outputs.dev_namespace }}
+      dev_image_repository:     ${{ steps.load.outputs.dev_image_repository }}
+      dev_values_files:         ${{ steps.load.outputs.dev_values_files }}
+      qa_aws_region:            ${{ steps.load.outputs.qa_aws_region }}
+      qa_cluster_name:          ${{ steps.load.outputs.qa_cluster_name }}
+      qa_namespace:             ${{ steps.load.outputs.qa_namespace }}
+      qa_image_repository:      ${{ steps.load.outputs.qa_image_repository }}
+      qa_values_files:          ${{ steps.load.outputs.qa_values_files }}
+      staging_aws_region:       ${{ steps.load.outputs.staging_aws_region }}
+      staging_cluster_name:     ${{ steps.load.outputs.staging_cluster_name }}
+      staging_namespace:        ${{ steps.load.outputs.staging_namespace }}
+      staging_image_repository: ${{ steps.load.outputs.staging_image_repository }}
+      staging_values_files:     ${{ steps.load.outputs.staging_values_files }}
+      prod_aws_region:          ${{ steps.load.outputs.prod_aws_region }}
+      prod_cluster_name:        ${{ steps.load.outputs.prod_cluster_name }}
+      prod_namespace:           ${{ steps.load.outputs.prod_namespace }}
+      prod_image_repository:    ${{ steps.load.outputs.prod_image_repository }}
+      prod_values_files:        ${{ steps.load.outputs.prod_values_files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - id: load
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=.github/variables/configurations.yaml
+          if [[ ! -f "$f" ]]; then
+            echo "::error::config file not found: $f"; exit 1
+          fi
+          for env in dev qa staging prod; do
+            for key in AWS_REGION EKS_CLUSTER_NAME K8S_NAMESPACE IMAGE_REPOSITORY VALUES_FILES; do
+              val=$(yq -r ".${env}.${key}" "$f")
+              if [[ -z "$val" || "$val" == "null" ]]; then
+                echo "::error::missing or empty key: ${env}.${key} in $f"; exit 1
+              fi
+              case "$key" in
+                AWS_REGION)       out="${env}_aws_region" ;;
+                EKS_CLUSTER_NAME) out="${env}_cluster_name" ;;
+                K8S_NAMESPACE)    out="${env}_namespace" ;;
+                IMAGE_REPOSITORY) out="${env}_image_repository" ;;
+                VALUES_FILES)     out="${env}_values_files" ;;
+              esac
+              echo "${out}=${val}" >> "$GITHUB_OUTPUT"
+            done
+          done
+
+  # PR preview — render + server-side diff, no apply.
+  # Targets staging when the PR is into a release/* branch (since a merge
+  # there auto-deploys to staging); otherwise targets dev (the leading-edge
+  # cluster fed by master + feature branches).
+  diff_dev:
+    if: github.event_name == 'pull_request' && !startsWith(github.base_ref, 'release/')
+    needs: config
+    name: Diff against dev
+    uses: ./.github/workflows/deploy-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      aws_region:       ${{ needs.config.outputs.dev_aws_region }}
+      cluster_name:     ${{ needs.config.outputs.dev_cluster_name }}
+      namespace:        ${{ needs.config.outputs.dev_namespace }}
+      method: helm
+      chart_path: helm/codeplex-ai
+      release_name: codeplex-ai
+      values_files:     ${{ needs.config.outputs.dev_values_files }}
+      image_repository: ${{ needs.config.outputs.dev_image_repository }}
+      image_tag: ${{ github.event.pull_request.head.sha }}
+      dry_run: true
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  diff_staging:
+    if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'release/')
+    needs: config
+    name: Diff against staging
+    uses: ./.github/workflows/deploy-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: staging
+      aws_region:       ${{ needs.config.outputs.staging_aws_region }}
+      cluster_name:     ${{ needs.config.outputs.staging_cluster_name }}
+      namespace:        ${{ needs.config.outputs.staging_namespace }}
+      method: helm
+      chart_path: helm/codeplex-ai
+      release_name: codeplex-ai
+      values_files:     ${{ needs.config.outputs.staging_values_files }}
+      image_repository: ${{ needs.config.outputs.staging_image_repository }}
+      image_tag: ${{ github.event.pull_request.head.sha }}
+      dry_run: true
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  # Auto-deploy to dev on push to master/main or any feature/* branch.
+  auto_dev:
+    if: |
+      github.event_name == 'push' && (
+        github.ref == 'refs/heads/master' ||
+        github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/heads/feature/')
+      )
+    needs: config
+    name: Deploy to dev
+    uses: ./.github/workflows/deploy-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      aws_region:       ${{ needs.config.outputs.dev_aws_region }}
+      cluster_name:     ${{ needs.config.outputs.dev_cluster_name }}
+      namespace:        ${{ needs.config.outputs.dev_namespace }}
+      method: helm
+      chart_path: helm/codeplex-ai
+      release_name: codeplex-ai
+      values_files:     ${{ needs.config.outputs.dev_values_files }}
+      image_repository: ${{ needs.config.outputs.dev_image_repository }}
+      image_tag: ${{ github.sha }}
+      wait_for_workload: deployment/codeplex-ai
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  # Auto-deploy to staging on push to any release/* branch.
+  auto_staging:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    needs: config
+    name: Deploy to staging
+    uses: ./.github/workflows/deploy-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: staging
+      aws_region:       ${{ needs.config.outputs.staging_aws_region }}
+      cluster_name:     ${{ needs.config.outputs.staging_cluster_name }}
+      namespace:        ${{ needs.config.outputs.staging_namespace }}
+      method: helm
+      chart_path: helm/codeplex-ai
+      release_name: codeplex-ai
+      values_files:     ${{ needs.config.outputs.staging_values_files }}
+      image_repository: ${{ needs.config.outputs.staging_image_repository }}
+      image_tag: ${{ github.sha }}
+      wait_for_workload: deployment/codeplex-ai
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  # Manual promote — pick env + method + image tag.
+  # Soft-enforces promotion policy:
+  #   * qa   may only be promoted from master/main (post-dev validation).
+  #   * prod may only be promoted from release/* (after staging validation).
+  # dev and staging are always allowed (manual reruns of the auto path).
+  manual:
+    if: |
+      github.event_name == 'workflow_dispatch' && (
+        inputs.environment == 'dev' ||
+        inputs.environment == 'staging' ||
+        (inputs.environment == 'qa'   && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')) ||
+        (inputs.environment == 'prod' && startsWith(github.ref, 'refs/heads/release/'))
+      )
+    needs: config
+    name: Manual deploy → ${{ inputs.environment }}
+    uses: ./.github/workflows/deploy-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      # Four-way pick across prod / staging / qa / dev. Each chain is
+      # `prod ? prod_X : staging ? staging_X : qa ? qa_X : dev_X`, written in
+      # GHA expression syntax (`A && B || C`).
+      aws_region:       ${{ inputs.environment == 'prod' && needs.config.outputs.prod_aws_region       || inputs.environment == 'staging' && needs.config.outputs.staging_aws_region       || inputs.environment == 'qa' && needs.config.outputs.qa_aws_region       || needs.config.outputs.dev_aws_region }}
+      cluster_name:     ${{ inputs.environment == 'prod' && needs.config.outputs.prod_cluster_name     || inputs.environment == 'staging' && needs.config.outputs.staging_cluster_name     || inputs.environment == 'qa' && needs.config.outputs.qa_cluster_name     || needs.config.outputs.dev_cluster_name }}
+      namespace:        ${{ inputs.environment == 'prod' && needs.config.outputs.prod_namespace        || inputs.environment == 'staging' && needs.config.outputs.staging_namespace        || inputs.environment == 'qa' && needs.config.outputs.qa_namespace        || needs.config.outputs.dev_namespace }}
+      method: ${{ inputs.method }}
+      chart_path: helm/codeplex-ai
+      release_name: codeplex-ai
+      values_files:     ${{ inputs.environment == 'prod' && needs.config.outputs.prod_values_files     || inputs.environment == 'staging' && needs.config.outputs.staging_values_files     || inputs.environment == 'qa' && needs.config.outputs.qa_values_files     || needs.config.outputs.dev_values_files }}
+      kustomize_path: k8s
+      image_repository: ${{ inputs.environment == 'prod' && needs.config.outputs.prod_image_repository || inputs.environment == 'staging' && needs.config.outputs.staging_image_repository || inputs.environment == 'qa' && needs.config.outputs.qa_image_repository || needs.config.outputs.dev_image_repository }}
+      image_tag: ${{ inputs.image_tag }}
+      wait_for_workload: deployment/codeplex-ai
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  # ── External trigger from the infra repo ────────────────────────────────
+  # Validates the dispatch payload and only auto-applies for `dev`. Higher
+  # environments must still go through the manual workflow_dispatch path so
+  # they pick up the GitHub Environment's required reviewers gate.
+  dispatch_validate:
+    if: github.event_name == 'repository_dispatch'
+    name: Validate dispatch payload
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.v.outputs.environment }}
+      method: ${{ steps.v.outputs.method }}
+      image_tag: ${{ steps.v.outputs.image_tag }}
+    steps:
+      - id: v
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ github.event.client_payload.environment }}
+          METHOD: ${{ github.event.client_payload.method }}
+          IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
+          INFRA_RUN: ${{ github.event.client_payload.infrastructure_run_url }}
+          TRIGGERED_BY: ${{ github.event.client_payload.triggered_by }}
+          TRIGGERED_FROM: ${{ github.event.client_payload.triggered_from }}
+        run: |
+          set -euo pipefail
+
+          # environment is required and must be one of the four we know about.
+          case "${ENVIRONMENT:-}" in
+            dev|qa|staging|prod) ;;
+            "") echo "::error::client_payload.environment is required"; exit 1 ;;
+            *)  echo "::error::unknown environment '$ENVIRONMENT' (expected dev|qa|staging|prod)"; exit 1 ;;
+          esac
+
+          # Only `dev` is auto-applied via dispatch. qa/staging/prod from this
+          # path is rejected — they must go through workflow_dispatch so the
+          # promotion policy + Environment reviewers run.
+          if [[ "$ENVIRONMENT" != "dev" ]]; then
+            echo "::error::repository_dispatch can only target 'dev' (got '$ENVIRONMENT'). Use workflow_dispatch with required reviewers for $ENVIRONMENT."
+            exit 1
+          fi
+
+          # method defaults to helm; only helm|kustomize allowed.
+          METHOD="${METHOD:-helm}"
+          case "$METHOD" in helm|kustomize) ;; *) echo "::error::method must be helm|kustomize (got '$METHOD')"; exit 1 ;; esac
+
+          # image_tag defaults to dispatch payload's value; if blank, fall back
+          # to the SHA of the default branch at trigger time. The infra run id
+          # is *not* a valid image tag, so don't substitute that.
+          if [[ -z "${IMAGE_TAG:-}" ]]; then
+            IMAGE_TAG="${{ github.sha }}"
+            echo "::notice::image_tag not provided in payload; using current ref SHA $IMAGE_TAG"
+          fi
+
+          {
+            echo "environment=$ENVIRONMENT"
+            echo "method=$METHOD"
+            echo "image_tag=$IMAGE_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Infra-triggered deploy"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Environment | $ENVIRONMENT |"
+            echo "| Method | $METHOD |"
+            echo "| Image tag | \`$IMAGE_TAG\` |"
+            echo "| Triggered by | $TRIGGERED_BY (in $TRIGGERED_FROM) |"
+            echo "| Infra run | $INFRA_RUN |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  dispatch_deploy:
+    if: github.event_name == 'repository_dispatch'
+    needs: [config, dispatch_validate]
+    name: Deploy from dispatch → ${{ needs.dispatch_validate.outputs.environment }}
+    uses: ./.github/workflows/deploy-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ needs.dispatch_validate.outputs.environment }}
+      aws_region:       ${{ needs.config.outputs.dev_aws_region }}
+      cluster_name:     ${{ needs.config.outputs.dev_cluster_name }}
+      namespace:        ${{ needs.config.outputs.dev_namespace }}
+      method: ${{ needs.dispatch_validate.outputs.method }}
+      chart_path: helm/codeplex-ai
+      release_name: codeplex-ai
+      values_files:     ${{ needs.config.outputs.dev_values_files }}
+      kustomize_path: k8s
+      image_repository: ${{ needs.config.outputs.dev_image_repository }}
+      image_tag:        ${{ needs.dispatch_validate.outputs.image_tag }}
+      wait_for_workload: deployment/codeplex-ai
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  # Surface a clear error if someone tries to dispatch qa from a non-master
+  # ref or prod from a non-release ref. Without this guard the `manual` job
+  # would silently be skipped (its `if` evaluates to false) and the operator
+  # would have no idea why nothing happened.
+  manual_policy_check:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate promotion policy
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            qa)
+              if [[ "$REF" != "refs/heads/master" && "$REF" != "refs/heads/main" ]]; then
+                echo "::error::qa can only be promoted from master/main (got $REF)"; exit 1
+              fi ;;
+            prod)
+              if [[ "$REF" != refs/heads/release/* ]]; then
+                echo "::error::prod can only be promoted from a release/* branch (got $REF)"; exit 1
+              fi ;;
+            dev|staging) ;;
+            *) echo "::error::unknown environment: $ENVIRONMENT"; exit 1 ;;
+          esac
+          echo "Promotion policy OK: $ENVIRONMENT from $REF"

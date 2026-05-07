@@ -1,0 +1,36 @@
+# Single shared EKS cluster, one namespace per environment.
+# Helm releases are namespace-scoped, so `codeplex-ai` in `codeplex-dev`
+# is independent of `codeplex-ai` in `codeplex-qa`, etc.
+#
+# NOTE: prod sharing a cluster with non-prod is a soft-isolation choice —
+# a noisy-neighbour incident in dev/qa/staging can starve prod of CPU,
+# memory, or pods. Mitigate with ResourceQuotas per namespace, dedicated
+# node groups for prod (taints + tolerations), and NetworkPolicies.
+
+dev:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: codeplex-eks
+  K8S_NAMESPACE: codeplex-dev
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/dev.yaml
+
+qa:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: codeplex-eks
+  K8S_NAMESPACE: codeplex-qa
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/qa.yaml
+
+staging:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: codeplex-eks
+  K8S_NAMESPACE: codeplex-staging
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/staging.yaml
+
+prod:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: codeplex-eks
+  K8S_NAMESPACE: codeplex-prod
+  IMAGE_REPOSITORY: ghcr.io/luniemma/codeplex-ai
+  VALUES_FILES: helm/codeplex-ai/values.yaml,helm/envs/prod.yaml

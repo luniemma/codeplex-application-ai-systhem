@@ -1,0 +1,40 @@
+# Per-env overlay: staging namespace on the shared codeplex-eks cluster.
+# Mirrors prod sizing closely so load tests are representative.
+
+replicaCount: 2
+
+config:
+  ENVIRONMENT: staging
+  DEBUG: "False"
+  LOG_LEVEL: INFO
+  ENABLE_CACHING: "True"
+  ENABLE_RATE_LIMITING: "True"
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+ingress:
+  enabled: true
+  hosts:
+    - host: codeplex-staging.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+redis:
+  enabled: true

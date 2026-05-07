@@ -502,34 +502,61 @@ docker-compose up
 
 ## Kubernetes
 
-Two equivalent deployment paths — pick whichever fits your cluster:
+**Topology:** one shared EKS cluster (`codeplex-eks`, provisioned by the [terraform-aws-ec2 `platform` stack](../terraform-aws-ec2/environments/platform.tfvars)), one Kubernetes namespace per environment — `codeplex-dev`, `codeplex-qa`, `codeplex-staging`, `codeplex-prod`. Per-env values are loaded from [.github/variables/configurations.yaml](.github/variables/configurations.yaml) by the deploy workflow.
 
-### Raw manifests ([`k8s/`](k8s/README.md))
+CI deploy chain:
 
-`kubectl apply -f k8s/` brings up the app, Redis, **and** a self-contained Prometheus + Grafana stack — no operator, no Helm, just `kubectl`. Manifests are numbered so lexical ordering matches apply ordering.
-
-```bash
-cp k8s/11-secret.example.yaml k8s/11-secret.yaml      # fill in real API keys
-kubectl apply -f k8s/
-kubectl -n codeplex-ai port-forward svc/grafana 3000:3000   # admin / admin
+```
+infra repo: terraform apply (env=platform) ──► repository_dispatch (event=deploy-app, env=dev)
+                                                          │
+                                                          ▼
+              app repo: deploy.yml ──► deploy-eks.yml ──► helm upgrade --install
+                                                          (namespace=codeplex-dev)
 ```
 
-The bundled Grafana auto-imports a "Codeplex AI" dashboard with request rate, latency percentiles, error rate, top routes, and per-pod request rate / p95 latency.
+`qa` / `staging` / `prod` deploys go through `workflow_dispatch` with required reviewers on the matching GitHub Environment (the `dispatch_validate` job rejects non-`dev` from cross-repo dispatch).
 
-### Helm chart ([`helm/codeplex-ai/`](helm/codeplex-ai/README.md))
+Two equivalent local deployment paths — pick whichever fits your cluster:
+
+### Helm chart ([`helm/codeplex-ai/`](helm/codeplex-ai/README.md)) — primary path
 
 Standard Helm chart for the app, designed to integrate with [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) — emits a `ServiceMonitor` and a Grafana dashboard `ConfigMap` with the `grafana_dashboard: "1"` label that the Grafana sidecar auto-discovers.
 
+Per-env overlays live in [helm/envs/](helm/envs/) and are layered on top of `helm/codeplex-ai/values.yaml`:
+
+| File | Used by | Notes |
+|---|---|---|
+| [helm/envs/dev.yaml](helm/envs/dev.yaml) | `codeplex-dev` namespace | 1 replica, debug logs, bundled Redis |
+| [helm/envs/qa.yaml](helm/envs/qa.yaml) | `codeplex-qa` namespace | HPA on, no ingress |
+| [helm/envs/staging.yaml](helm/envs/staging.yaml) | `codeplex-staging` namespace | Mirrors prod sizing, ingress on |
+| [helm/envs/prod.yaml](helm/envs/prod.yaml) | `codeplex-prod` namespace | `secrets.create=false` (out-of-band), `redis.enabled=false` (use managed), ServiceMonitor + Grafana dashboard on |
+
+CI applies them automatically based on `configurations.yaml`. Local equivalent for one-off deploys:
+
 ```bash
-helm install codeplex-ai ./helm/codeplex-ai \
-  --namespace codeplex-ai --create-namespace \
-  --set secrets.values.GOOGLE_API_KEY=AIza... \
-  --set serviceMonitor.enabled=true \
-  --set serviceMonitor.labels.release=monitoring \
-  --set grafanaDashboard.enabled=true
+helm upgrade --install codeplex-ai ./helm/codeplex-ai \
+  --namespace codeplex-dev --create-namespace \
+  --values helm/codeplex-ai/values.yaml \
+  --values helm/envs/dev.yaml \
+  --set image.tag=$(git rev-parse HEAD)
 ```
 
 The chart's `values.yaml` documents every knob: replicas, autoscaling thresholds, resource limits, ingress, ServiceMonitor labels, etc. For full options see [helm/codeplex-ai/README.md](helm/codeplex-ai/README.md).
+
+### Raw manifests ([`k8s/`](k8s/README.md))
+
+`kubectl apply -k k8s/` (kustomize) brings up the app, Redis, **and** a self-contained Prometheus + Grafana stack — no operator, no Helm. Manifests are numbered so lexical ordering matches apply ordering, and [k8s/kustomization.yaml](k8s/kustomization.yaml) is the entry point.
+
+The kustomize path is namespace-agnostic: every resource has its `metadata.namespace` rewritten by [kustomization.yaml](k8s/kustomization.yaml)'s `namespace:` field (RoleBinding subjects too). The CI workflow runs `kustomize edit set namespace "$NAMESPACE"` before `kustomize build`, so the same manifests deploy cleanly into any per-env namespace. For a local run:
+
+```bash
+cp k8s/11-secret.example.yaml k8s/11-secret.yaml      # fill in real API keys
+(cd k8s && kustomize edit set namespace codeplex-dev)
+kubectl apply -k k8s/
+kubectl -n codeplex-dev port-forward svc/grafana 3000:3000   # admin / admin
+```
+
+The bundled Prometheus uses `namespaces.own_namespace: true`, so service discovery is automatically scoped to whichever namespace it's deployed into — no per-env config edits needed. The bundled Grafana auto-imports a "Codeplex AI" dashboard with request rate, latency percentiles, error rate, top routes, and per-pod request rate / p95 latency.
 
 ### One-shot script
 

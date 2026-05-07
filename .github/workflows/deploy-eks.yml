@@ -1,0 +1,372 @@
+# Reusable workflow: deploys this app to an EKS cluster (provisioned by
+# https://github.com/luniemma/aws-terraform-infra) using Helm or Kustomize.
+#
+# Design choices (best practices, no hardcoded values):
+#   * AWS auth via OIDC + IAM role assumption — no long-lived AWS keys.
+#     The role to assume is passed as a secret, not baked into this file.
+#   * Cluster name, region, namespace, image, tag, and method (helm|kustomize)
+#     are all inputs. Callers select per-environment values via
+#     GitHub Environments (so prod can require approvals).
+#   * Helm path uses `upgrade --install --atomic --wait` so a failed rollout
+#     auto-rolls back instead of leaving a half-applied release.
+#   * `dry_run: true` runs `helm diff` / `kustomize build | kubectl diff` and
+#     does not apply — meant for PRs.
+#   * kubeconfig is written to a job-scoped temp dir and torn down on exit.
+#   * Tools (helm, kubectl, kustomize) are pinned to caller-provided versions
+#     so upgrades are explicit, not silent.
+#
+# Call from another workflow with:
+#
+#   jobs:
+#     deploy:
+#       uses: ./.github/workflows/deploy-eks.yml
+#       permissions:
+#         id-token: write   # OIDC token for AWS role assumption
+#         contents: read
+#       with:
+#         environment: staging
+#         aws_region: us-east-1
+#         cluster_name: codeplex-staging
+#         namespace: codeplex
+#         method: helm
+#         chart_path: helm/codeplex-ai
+#         release_name: codeplex-ai
+#         values_files: helm/codeplex-ai/values.yaml,helm/envs/staging.yaml
+#         image_repository: ghcr.io/luniemma/codeplex-ai
+#         image_tag: ${{ github.sha }}
+#       secrets:
+#         AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+name: Deploy to EKS (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub Environment to deploy into (e.g. staging, prod). Drives approvals and env-scoped secrets."
+        type: string
+        required: true
+      aws_region:
+        description: "AWS region of the target EKS cluster."
+        type: string
+        required: true
+      cluster_name:
+        description: "EKS cluster name (matches the cluster output from aws-terraform-infra)."
+        type: string
+        required: true
+      namespace:
+        description: "Target Kubernetes namespace. Created if missing."
+        type: string
+        required: true
+      method:
+        description: "Deployment method: 'helm' or 'kustomize'."
+        type: string
+        required: true
+      # ---- Helm-only inputs -------------------------------------------------
+      chart_path:
+        description: "Path to the Helm chart in this repo (used when method=helm)."
+        type: string
+        required: false
+        default: helm/codeplex-ai
+      release_name:
+        description: "Helm release name (used when method=helm)."
+        type: string
+        required: false
+        default: codeplex-ai
+      values_files:
+        description: "Comma-separated values files, applied in order (last wins). Paths are relative to repo root."
+        type: string
+        required: false
+        default: ""
+      helm_extra_args:
+        description: "Extra args appended to `helm upgrade --install` (e.g. '--set foo=bar')."
+        type: string
+        required: false
+        default: ""
+      # ---- Kustomize-only inputs --------------------------------------------
+      kustomize_path:
+        description: "Path to a kustomization directory (used when method=kustomize)."
+        type: string
+        required: false
+        default: k8s
+      # ---- Image (works for both methods) -----------------------------------
+      image_repository:
+        description: "Container image repository (no tag). Set to '' to skip image override."
+        type: string
+        required: false
+        default: ""
+      image_tag:
+        description: "Image tag or digest to deploy. Prefer immutable refs (commit SHA or sha256:...)."
+        type: string
+        required: false
+        default: ""
+      # ---- Behaviour --------------------------------------------------------
+      dry_run:
+        description: "If true, render + diff only — never apply. Use for PR previews."
+        type: boolean
+        required: false
+        default: false
+      timeout:
+        description: "Rollout/helm timeout (e.g. 5m, 10m)."
+        type: string
+        required: false
+        default: "10m"
+      wait_for_workload:
+        description: "Optional 'kind/name' to `kubectl rollout status` after deploy (e.g. deployment/codeplex-ai)."
+        type: string
+        required: false
+        default: ""
+      # ---- Tool versions (pin explicitly so upgrades are intentional) -------
+      kubectl_version:
+        description: "kubectl version to install (e.g. v1.30.4). Empty = latest stable."
+        type: string
+        required: false
+        default: "v1.30.4"
+      helm_version:
+        description: "Helm version to install (e.g. v3.16.2)."
+        type: string
+        required: false
+        default: "v3.16.2"
+      kustomize_version:
+        description: "Kustomize version (e.g. 5.4.3, no leading v)."
+        type: string
+        required: false
+        default: "5.4.3"
+    secrets:
+      AWS_ROLE_ARN:
+        description: "IAM role ARN to assume via OIDC. Must be allowed to describe + access the EKS cluster."
+        required: true
+    outputs:
+      release_revision:
+        description: "Helm revision number after upgrade (helm method only)."
+        value: ${{ jobs.deploy.outputs.release_revision }}
+
+permissions: {}   # fall back to caller-granted perms; see header comment
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.method }} → ${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write   # required to mint the OIDC token for AWS
+      contents: read
+    timeout-minutes: 30
+    outputs:
+      release_revision: ${{ steps.helm-deploy.outputs.revision }}
+    env:
+      KUBECONFIG: ${{ github.workspace }}/.kube/config
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.method }}" in
+            helm|kustomize) ;;
+            *) echo "::error::method must be 'helm' or 'kustomize' (got '${{ inputs.method }}')"; exit 1 ;;
+          esac
+          if [[ "${{ inputs.method }}" == "helm" && -z "${{ inputs.chart_path }}" ]]; then
+            echo "::error::chart_path is required when method=helm"; exit 1
+          fi
+          if [[ "${{ inputs.method }}" == "kustomize" && -z "${{ inputs.kustomize_path }}" ]]; then
+            echo "::error::kustomize_path is required when method=kustomize"; exit 1
+          fi
+          if [[ -n "${{ inputs.image_repository }}" && -z "${{ inputs.image_tag }}" ]]; then
+            echo "::error::image_tag is required when image_repository is set"; exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+          role-session-name: gha-deploy-${{ inputs.environment }}-${{ github.run_id }}
+          # Audience must match the EKS OIDC trust policy in aws-terraform-infra.
+          audience: sts.amazonaws.com
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ inputs.kubectl_version }}
+
+      - name: Install Helm
+        if: inputs.method == 'helm'
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ inputs.helm_version }}
+
+      - name: Install Kustomize
+        if: inputs.method == 'kustomize'
+        uses: imranismail/setup-kustomize@v2
+        with:
+          kustomize-version: ${{ inputs.kustomize_version }}
+
+      - name: Write kubeconfig for EKS cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$KUBECONFIG")"
+          aws eks update-kubeconfig \
+            --region "${{ inputs.aws_region }}" \
+            --name   "${{ inputs.cluster_name }}" \
+            --kubeconfig "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          kubectl version --client=true
+          kubectl config current-context
+
+      - name: Ensure namespace exists
+        if: inputs.dry_run == false
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl get ns "${{ inputs.namespace }}" >/dev/null 2>&1 \
+            || kubectl create namespace "${{ inputs.namespace }}"
+
+      # ----------------------------------------------------------------------
+      # Helm path
+      # ----------------------------------------------------------------------
+      - name: Build Helm value/image flags
+        if: inputs.method == 'helm'
+        id: helm-flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          IFS=',' read -ra files <<< "${{ inputs.values_files }}"
+          for f in "${files[@]}"; do
+            f="$(echo "$f" | xargs)"   # trim
+            [[ -z "$f" ]] && continue
+            if [[ ! -f "$f" ]]; then
+              echo "::error::values file not found: $f"; exit 1
+            fi
+            flags+=( "--values" "$f" )
+          done
+          if [[ -n "${{ inputs.image_repository }}" ]]; then
+            flags+=( "--set" "image.repository=${{ inputs.image_repository }}" )
+            flags+=( "--set" "image.tag=${{ inputs.image_tag }}" )
+          fi
+          # Render space-separated for the next step.
+          printf 'flags=%s\n' "${flags[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Helm dependency build
+        if: inputs.method == 'helm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "${{ inputs.chart_path }}/Chart.lock" || -d "${{ inputs.chart_path }}/charts" ]]; then
+            helm dependency build "${{ inputs.chart_path }}"
+          fi
+
+      - name: Helm diff (dry run)
+        if: inputs.method == 'helm' && inputs.dry_run == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm template "${{ inputs.release_name }}" "${{ inputs.chart_path }}" \
+            --namespace "${{ inputs.namespace }}" \
+            ${{ steps.helm-flags.outputs.flags }} \
+            ${{ inputs.helm_extra_args }} \
+            | tee /tmp/rendered.yaml >/dev/null
+          echo "Rendered manifest size: $(wc -l < /tmp/rendered.yaml) lines"
+          # Server-side dry run shows what would actually change in-cluster.
+          kubectl diff -f /tmp/rendered.yaml || true
+
+      - name: Helm upgrade --install
+        if: inputs.method == 'helm' && inputs.dry_run == false
+        id: helm-deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm upgrade --install "${{ inputs.release_name }}" "${{ inputs.chart_path }}" \
+            --namespace "${{ inputs.namespace }}" \
+            --create-namespace \
+            --atomic \
+            --wait \
+            --timeout "${{ inputs.timeout }}" \
+            ${{ steps.helm-flags.outputs.flags }} \
+            ${{ inputs.helm_extra_args }}
+          revision=$(helm history "${{ inputs.release_name }}" -n "${{ inputs.namespace }}" -o json \
+            | jq -r '.[-1].revision')
+          echo "revision=${revision}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Helm release ${{ inputs.release_name }} now at revision ${revision}"
+
+      # ----------------------------------------------------------------------
+      # Kustomize path
+      # ----------------------------------------------------------------------
+      - name: Kustomize set namespace
+        if: inputs.method == 'kustomize'
+        shell: bash
+        working-directory: ${{ inputs.kustomize_path }}
+        run: |
+          set -euo pipefail
+          # Rewrites metadata.namespace AND RoleBinding subjects.namespace to
+          # the env-scoped namespace. Plain `kubectl apply -n` would not catch
+          # subjects, so RBAC would silently bind to the wrong namespace.
+          kustomize edit set namespace "${{ inputs.namespace }}"
+
+      - name: Kustomize image override
+        if: inputs.method == 'kustomize' && inputs.image_repository != ''
+        shell: bash
+        working-directory: ${{ inputs.kustomize_path }}
+        run: |
+          set -euo pipefail
+          kustomize edit set image "${{ inputs.image_repository }}=${{ inputs.image_repository }}:${{ inputs.image_tag }}"
+
+      - name: Kustomize diff (dry run)
+        if: inputs.method == 'kustomize' && inputs.dry_run == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          kustomize build "${{ inputs.kustomize_path }}" > /tmp/rendered.yaml
+          echo "Rendered manifest size: $(wc -l < /tmp/rendered.yaml) lines"
+          kubectl diff -n "${{ inputs.namespace }}" -f /tmp/rendered.yaml || true
+
+      - name: Kustomize apply
+        if: inputs.method == 'kustomize' && inputs.dry_run == false
+        shell: bash
+        run: |
+          set -euo pipefail
+          kustomize build "${{ inputs.kustomize_path }}" \
+            | kubectl apply -n "${{ inputs.namespace }}" --server-side --prune=false -f -
+
+      # ----------------------------------------------------------------------
+      # Post-deploy verification
+      # ----------------------------------------------------------------------
+      - name: Wait for rollout
+        if: inputs.dry_run == false && inputs.wait_for_workload != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n "${{ inputs.namespace }}" rollout status \
+            "${{ inputs.wait_for_workload }}" \
+            --timeout "${{ inputs.timeout }}"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Deploy → ${{ inputs.environment }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Method | ${{ inputs.method }} |"
+            echo "| Cluster | ${{ inputs.cluster_name }} (${{ inputs.aws_region }}) |"
+            echo "| Namespace | ${{ inputs.namespace }} |"
+            echo "| Image | ${{ inputs.image_repository }}:${{ inputs.image_tag }} |"
+            echo "| Dry run | ${{ inputs.dry_run }} |"
+            if [[ "${{ inputs.method }}" == "helm" ]]; then
+              echo "| Release | ${{ inputs.release_name }} |"
+              echo "| Revision | ${{ steps.helm-deploy.outputs.revision }} |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Scrub kubeconfig
+        if: always()
+        shell: bash
+        run: rm -f "$KUBECONFIG" || true

@@ -1,0 +1,32 @@
+# Per-env overlay: dev namespace on the shared codeplex-eks cluster.
+# Applied AFTER helm/codeplex-ai/values.yaml, so anything here wins.
+
+replicaCount: 1
+
+config:
+  ENVIRONMENT: development
+  DEBUG: "True"
+  LOG_LEVEL: DEBUG
+  ENABLE_CACHING: "True"
+  ENABLE_RATE_LIMITING: "False"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 384Mi
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+ingress:
+  enabled: false
+
+# Bundled Redis is fine for dev — no external dependency.
+redis:
+  enabled: true

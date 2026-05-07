@@ -2,7 +2,6 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: codeplex-ai
-  namespace: codeplex-ai
   labels:
     app.kubernetes.io/name: codeplex-ai
     app.kubernetes.io/part-of: codeplex-ai
