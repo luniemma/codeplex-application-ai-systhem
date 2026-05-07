@@ -86,6 +86,17 @@ on:
   repository_dispatch:
     types: [deploy-app]
 
+# GitHub gives workflow_run-triggered runs read-only token permissions by
+# default, and a job-level `permissions:` block can't widen what the workflow
+# has. Without `id-token: write` here, aws-actions/configure-aws-credentials
+# retries OIDC token fetch ~12 times and finally fails with the misleading
+# error "No OpenIDConnect provider found in your account". Set the maximum
+# the workflow needs at workflow scope; downstream jobs still narrow as needed.
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write   # for the PR diff comment job
+
 # Cancel in-flight deploys for the same ref+env combo so we don't ship N-1
 # on top of N. `cancel-in-progress: false` for prod would be safer; the
 # matrix isn't worth the YAML complexity here.
