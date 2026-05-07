@@ -222,16 +222,19 @@ jobs:
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
 
-  # Auto-deploy to dev after a successful Docker build on master/main/feature/*.
+  # Auto-deploy to dev after a successful Docker build on master/main.
   # workflow_run guarantees the image tag we're about to deploy has already
   # been pushed to the registry — no race with the build job.
+  #
+  # feature/* deliberately excluded: docker.yml only pushes images on master/main
+  # (see push_to_ghcr / push_to_dockerhub gates), so a feature push has no
+  # registry tag matching the deploy SHA and would hit ImagePullBackOff.
   auto_dev:
     if: |
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' && (
         github.event.workflow_run.head_branch == 'master' ||
-        github.event.workflow_run.head_branch == 'main' ||
-        startsWith(github.event.workflow_run.head_branch, 'feature/')
+        github.event.workflow_run.head_branch == 'main'
       )
     needs: [config, runtime]
     name: Deploy to dev

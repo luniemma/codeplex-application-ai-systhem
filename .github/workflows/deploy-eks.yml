@@ -392,6 +392,34 @@ jobs:
             "${{ inputs.wait_for_workload }}" \
             --timeout "${{ inputs.timeout }}"
 
+      # End-to-end smoke test — actually hit /livez via the in-cluster Service
+      # name to confirm Service routing + endpoint slices + pod responses are
+      # all working together. `kubectl rollout status` only confirms pods went
+      # Ready; this confirms a live HTTP request returns 200. Runs a one-shot
+      # curl pod and exits its status code.
+      - name: Smoke test (HTTP /livez)
+        if: inputs.method == 'helm' && inputs.dry_run == false
+        shell: bash
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          RELEASE: ${{ inputs.release_name }}
+        run: |
+          set -euo pipefail
+          # Service port comes from the chart; default 8000 matches values.yaml.
+          port=$(kubectl -n "$NAMESPACE" get svc "$RELEASE" \
+            -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null || echo "8000")
+          target="http://${RELEASE}.${NAMESPACE}.svc.cluster.local:${port}/livez"
+          echo "Probing ${target} from inside the cluster…"
+
+          # `kubectl run --rm -it --restart=Never` exits with the container's
+          # exit code, so a non-2xx fails the step.
+          kubectl -n "$NAMESPACE" run smoke-${GITHUB_RUN_ID:-$$} \
+            --image=curlimages/curl:8.10.1 \
+            --rm --restart=Never --quiet --attach=true \
+            --command -- curl --fail --silent --show-error --max-time 10 "$target"
+
+          echo "::notice title=Smoke test::${target} returned 200"
+
       # Emit the three service URLs to the workflow run summary. If the shared
       # Ingress already has an NLB hostname, those URLs are public and clickable.
       # If it doesn't (e.g. AWS account doesn't yet support creating ELBs, or
