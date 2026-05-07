@@ -198,7 +198,9 @@ def _render(active: str, body: str) -> str:
         "<style>" + _BASE_CSS + "</style>"
         "</head><body>"
         + _HEADER_HTML
-        + "<main>" + body + "</main>"
+        + "<main>"
+        + body
+        + "</main>"
         + "<footer>{{ app_name }} v{{ version }} · running in <code>{{ environment }}</code></footer>"
         + _THEME_JS
         + "</body></html>"
@@ -339,15 +341,14 @@ build → deploy via GitHub Actions.</p>
 # ─── /status (server-rendered with current state) ─────────────────────────
 def _render_status() -> str:
     providers = {
-        "OpenAI":    _key_set(config.OPENAI_API_KEY),
+        "OpenAI": _key_set(config.OPENAI_API_KEY),
         "Anthropic": _key_set(config.ANTHROPIC_API_KEY),
-        "Google":    _key_set(config.GOOGLE_API_KEY),
+        "Google": _key_set(config.GOOGLE_API_KEY),
     }
     body = (
         "<h1>System status</h1>"
         "<p class='lead'>Live snapshot of this pod's runtime configuration. "
         "Refresh to re-read.</p>"
-
         "<div class='grid-2'>"
         "<div class='card'><h3>Build</h3>"
         f"<div class='kv'><span class='k'>App name</span><span class='v'>{config.APP_NAME}</span></div>"
@@ -356,7 +357,6 @@ def _render_status() -> str:
         f"<div class='kv'><span class='k'>Debug</span><span class='v'>{config.DEBUG}</span></div>"
         f"<div class='kv'><span class='k'>Pod served at</span><span class='v'>{datetime.utcnow().isoformat()}Z</span></div>"
         "</div>"
-
         "<div class='card'><h3>Provider keys</h3>"
         + "".join(
             f"<div class='kv'><span class='k'>{name}</span>"
@@ -365,7 +365,6 @@ def _render_status() -> str:
             for name, ok in providers.items()
         )
         + "</div>"
-
         "<div class='card'><h3>Runtime</h3>"
         f"<div class='kv'><span class='k'>Log level</span><span class='v'>{config.LOG_LEVEL}</span></div>"
         f"<div class='kv'><span class='k'>Log format</span><span class='v'>{config.LOG_FORMAT}</span></div>"
@@ -373,7 +372,6 @@ def _render_status() -> str:
         f"<div class='kv'><span class='k'>Caching</span><span class='v'>{config.ENABLE_CACHING}</span></div>"
         f"<div class='kv'><span class='k'>Rate limiting</span><span class='v'>{config.ENABLE_RATE_LIMITING}</span></div>"
         "</div>"
-
         "<div class='card'><h3>Models</h3>"
         f"<div class='kv'><span class='k'>OpenAI</span><span class='v'>{config.OPENAI_MODEL}</span></div>"
         f"<div class='kv'><span class='k'>Anthropic</span><span class='v'>{config.ANTHROPIC_MODEL}</span></div>"
@@ -381,7 +379,6 @@ def _render_status() -> str:
         f"<div class='kv'><span class='k'>OpenAI temperature</span><span class='v'>{config.OPENAI_TEMPERATURE}</span></div>"
         "</div>"
         "</div>"
-
         "<h2>Quick links</h2>"
         "<div class='grid-2'>"
         "<div class='card'><h3>Probes</h3>"
