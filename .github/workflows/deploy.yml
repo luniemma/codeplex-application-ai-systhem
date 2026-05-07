@@ -92,7 +92,8 @@ concurrency:
 jobs:
   # Loads .github/variables/configurations.yaml and exposes per-env values
   # as job outputs, so downstream reusable-workflow `with:` blocks can pin
-  # to literal strings without hardcoding them in this file.
+  # to literal strings without hardcoding them in this file. Static config
+  # only — runtime values like the deploy SHA live in the `runtime` job.
   config:
     name: Load config
     runs-on: ubuntu-latest
@@ -117,11 +118,6 @@ jobs:
       prod_namespace:           ${{ steps.load.outputs.prod_namespace }}
       prod_image_repository:    ${{ steps.load.outputs.prod_image_repository }}
       prod_values_files:        ${{ steps.load.outputs.prod_values_files }}
-      # `sha-<12char>` matches what build-docker.yml publishes as the per-commit
-      # tag (alongside `latest`). Use this everywhere the auto/dispatch paths
-      # default to the current commit, instead of github.sha — that 40-char form
-      # is never tagged on the registry.
-      image_tag_default:        ${{ steps.load.outputs.image_tag_default }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -129,12 +125,6 @@ jobs:
 
       - id: load
         shell: bash
-        env:
-          # When triggered by workflow_run (auto-deploys after Docker), github.sha
-          # points at the workflow file's commit, not the triggering build's
-          # commit. workflow_run.head_sha has the right value; fall back to
-          # github.sha for push/PR/dispatch paths.
-          GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
           f=.github/variables/configurations.yaml
@@ -158,8 +148,29 @@ jobs:
             done
           done
 
-          short_sha="${GITHUB_SHA:0:12}"
+  # Computes runtime / event-derived values that don't belong in
+  # configurations.yaml (it's static per-env). Specifically the default image
+  # tag for the current deploy: `sha-<12char>` to match what build-docker.yml
+  # publishes as the per-commit tag.
+  runtime:
+    name: Compute runtime values
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag_default: ${{ steps.compute.outputs.image_tag_default }}
+    steps:
+      - id: compute
+        shell: bash
+        env:
+          # When triggered by workflow_run (auto-deploys after Docker), github.sha
+          # points at the workflow file's commit, not the triggering build's
+          # commit. workflow_run.head_sha has the right value; fall back to
+          # github.sha for push/PR/dispatch paths.
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          short_sha="${DEPLOY_SHA:0:12}"
           echo "image_tag_default=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "::notice::deploy SHA=${DEPLOY_SHA} → image tag default=sha-${short_sha}"
 
   # PR preview — render + server-side diff, no apply.
   # Targets staging when the PR is into a release/* branch (since a merge
@@ -222,7 +233,7 @@ jobs:
         github.event.workflow_run.head_branch == 'main' ||
         startsWith(github.event.workflow_run.head_branch, 'feature/')
       )
-    needs: config
+    needs: [config, runtime]
     name: Deploy to dev
     uses: ./.github/workflows/deploy-eks.yml
     permissions:
@@ -238,7 +249,7 @@ jobs:
       release_name: codeplex-ai
       values_files:     ${{ needs.config.outputs.dev_values_files }}
       image_repository: ${{ needs.config.outputs.dev_image_repository }}
-      image_tag:        ${{ needs.config.outputs.image_tag_default }}
+      image_tag:        ${{ needs.runtime.outputs.image_tag_default }}
       wait_for_workload: deployment/codeplex-ai
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -249,7 +260,7 @@ jobs:
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       startsWith(github.event.workflow_run.head_branch, 'release/')
-    needs: config
+    needs: [config, runtime]
     name: Deploy to staging
     uses: ./.github/workflows/deploy-eks.yml
     permissions:
@@ -265,7 +276,7 @@ jobs:
       release_name: codeplex-ai
       values_files:     ${{ needs.config.outputs.staging_values_files }}
       image_repository: ${{ needs.config.outputs.staging_image_repository }}
-      image_tag:        ${{ needs.config.outputs.image_tag_default }}
+      image_tag:        ${{ needs.runtime.outputs.image_tag_default }}
       wait_for_workload: deployment/codeplex-ai
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -283,7 +294,7 @@ jobs:
         (inputs.environment == 'qa'   && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')) ||
         (inputs.environment == 'prod' && startsWith(github.ref, 'refs/heads/release/'))
       )
-    needs: config
+    needs: [config, runtime]
     name: Manual deploy → ${{ inputs.environment }}
     uses: ./.github/workflows/deploy-eks.yml
     permissions:
@@ -306,7 +317,7 @@ jobs:
       # dev/qa let blank image_tag fall back to image_tag_default (sha-<short>).
       # staging/prod require an explicit pin — manual_policy_check fails the
       # run if blank.
-      image_tag: ${{ inputs.image_tag != '' && inputs.image_tag || needs.config.outputs.image_tag_default }}
+      image_tag: ${{ inputs.image_tag != '' && inputs.image_tag || needs.runtime.outputs.image_tag_default }}
       wait_for_workload: deployment/codeplex-ai
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
