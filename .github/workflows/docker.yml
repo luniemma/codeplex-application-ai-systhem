@@ -36,6 +36,18 @@ on:
         required: false
         default: false
 
+# Workflow-scope permissions matter for workflow_run inheritance: when the
+# Deploy workflow is triggered by THIS workflow completing, its GITHUB_TOKEN
+# is capped at whatever this workflow has at workflow scope. Without
+# id-token: write here, the downstream auto_dev / auto_staging jobs can't
+# mint OIDC tokens to assume the AWS deploy role and fail with the
+# misleading "No OpenIDConnect provider found" error.
+permissions:
+  contents: read
+  packages: write          # GHCR push (used by the build job)
+  id-token: write          # cosign keyless signing + downstream Deploy OIDC
+  security-events: write   # Trivy SARIF upload
+
 jobs:
   build:
     name: Build & publish image
