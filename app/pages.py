@@ -643,7 +643,7 @@ _ROADMAP_BODY = (
     "<a href='https://github.com/luniemma/codeplex-application-ai-systhem/blob/master/app/pages.py' style='color:var(--accent)'>app/pages.py</a> "
     "(the <code>ROADMAP</code> list) to change what's shown here.</p>"
     + "".join(
-        (
+
             (
                 f"<h2>{section_label}</h2>"
                 "<div class='card' style='padding:0'>"
@@ -669,7 +669,7 @@ _ROADMAP_BODY = (
                 ("done", "Done"),
             ]
             if any(s == bucket for (_, s, _) in ROADMAP)
-        )
+
     )
 )
 
