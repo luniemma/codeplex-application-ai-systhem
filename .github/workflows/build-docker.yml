@@ -289,7 +289,7 @@ jobs:
       # the image came from this repo + workflow. ──
       - name: Install cosign
         if: ${{ steps.publish.outcome == 'success' }}
-        uses: sigstore/cosign-installer@v3.5.0
+        uses: sigstore/cosign-installer@v4.1.1
 
       - name: Sign images (Sigstore keyless)
         if: ${{ steps.publish.outcome == 'success' }}
