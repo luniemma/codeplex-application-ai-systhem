@@ -70,9 +70,10 @@ on:
         default: helm
         options: [helm, kustomize]
       image_tag:
-        description: "Image tag to deploy (commit SHA or sha256:... digest preferred)"
+        description: "Image tag to deploy (REQUIRED for staging/prod — pin a commit SHA or sha256:... digest. Optional for dev/qa: defaults to current ref SHA)."
         type: string
-        required: true
+        required: false
+        default: ""
   # External trigger from the infra repo (aws-terraform-infra / aks-terraform-iac).
   # The infra workflow fires `event-type: deploy-app` after a successful apply.
   # client_payload contract:
@@ -290,7 +291,9 @@ jobs:
       values_files:     ${{ inputs.environment == 'prod' && needs.config.outputs.prod_values_files     || inputs.environment == 'staging' && needs.config.outputs.staging_values_files     || inputs.environment == 'qa' && needs.config.outputs.qa_values_files     || needs.config.outputs.dev_values_files }}
       kustomize_path: k8s
       image_repository: ${{ inputs.environment == 'prod' && needs.config.outputs.prod_image_repository || inputs.environment == 'staging' && needs.config.outputs.staging_image_repository || inputs.environment == 'qa' && needs.config.outputs.qa_image_repository || needs.config.outputs.dev_image_repository }}
-      image_tag: ${{ inputs.image_tag }}
+      # dev/qa let blank image_tag fall back to the current ref SHA. staging/prod
+      # require an explicit pin — manual_policy_check fails the run if blank.
+      image_tag: ${{ inputs.image_tag != '' && inputs.image_tag || github.sha }}
       wait_for_workload: deployment/codeplex-ai
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
