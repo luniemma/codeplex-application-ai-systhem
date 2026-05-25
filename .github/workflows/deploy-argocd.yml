@@ -1,0 +1,407 @@
+# Deploy Argo CD end-to-end:
+#
+#   1. AWS OIDC → assume the same deploy IAM role as deploy.yml uses.
+#   2. Install/upgrade Argo CD into the `argocd` namespace from a pinned
+#      upstream manifest (argocd/install/, kustomize-built).
+#   3. Wait for every Argo CD workload (server, repo-server, controllers,
+#      redis, dex) to roll out.
+#   4. Optionally: helm-uninstall any pre-existing codeplex-ai release in
+#      each target namespace so Argo CD can adopt management cleanly
+#      without Helm 3 field-ownership conflicts. Off by default; only flip
+#      to true on the first bootstrap.
+#   5. Apply the bootstrap manifests (AppProject + 4 Applications) from
+#      argocd/bootstrap/.
+#   6. Print initial admin password + access details to the run summary.
+#   7. In-cluster smoke test against argocd-server /healthz.
+#
+# Trigger:
+#   * Manual via workflow_dispatch (with inputs to bump Argo CD version,
+#     run install-only, or run the helm migration step).
+#   * Auto on push to master when argocd/** or this file changes — keeps
+#     Argo CD config in lock-step with the repo.
+
+name: Deploy Argo CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      argocd_version:
+        description: "Argo CD version (e.g. v2.13.1). Bump cautiously — control-plane component."
+        type: string
+        required: false
+        default: "v2.13.1"
+      install_only:
+        description: "Skip the AppProject + Applications bootstrap. Useful for Argo CD upgrades after initial bootstrap."
+        type: boolean
+        required: false
+        default: false
+      migrate_helm_releases:
+        description: "DESTRUCTIVE. helm uninstall any existing codeplex-ai release in each target namespace so Argo CD can take over cleanly. Only check on first bootstrap."
+        type: boolean
+        required: false
+        default: false
+      dry_run:
+        description: "Render and print kustomize output — apply nothing."
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches: [master, main]
+    paths:
+      - "argocd/**"
+      - ".github/workflows/deploy-argocd.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-argocd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Reuse the same configurations.yaml that deploy.yml uses for AWS region +
+  # cluster name. Argo CD itself is a cluster-scoped install, so we only
+  # need the dev row's region+cluster; the four namespaces are baked into
+  # the bootstrap manifests.
+  config:
+    name: Load config
+    runs-on: ubuntu-latest
+    outputs:
+      aws_region:   ${{ steps.load.outputs.aws_region }}
+      cluster_name: ${{ steps.load.outputs.cluster_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - id: load
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=.github/variables/configurations.yaml
+          if [[ ! -f "$f" ]]; then
+            echo "::error::config file not found: $f"; exit 1
+          fi
+          aws_region=$(yq -r '.dev.AWS_REGION' "$f")
+          cluster_name=$(yq -r '.dev.EKS_CLUSTER_NAME' "$f")
+          for v in aws_region cluster_name; do
+            val=${!v}
+            if [[ -z "$val" || "$val" == "null" ]]; then
+              echo "::error::missing key in $f for output $v"; exit 1
+            fi
+          done
+          echo "aws_region=$aws_region"     >> "$GITHUB_OUTPUT"
+          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Install + bootstrap
+    needs: config
+    runs-on: ubuntu-latest
+    # Gate by the dev Environment for now (same actor model as deploy.yml's
+    # auto_dev path). Promote to an `infra` Environment with stricter
+    # reviewers once one exists.
+    environment: dev
+    permissions:
+      id-token: write
+      contents: read
+    timeout-minutes: 25
+    env:
+      KUBECONFIG: ${{ github.workspace }}/.kube/config
+      ARGOCD_NAMESPACE: argocd
+      ARGOCD_VERSION: ${{ github.event.inputs.argocd_version || 'v2.13.1' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ needs.config.outputs.aws_region }}
+          role-session-name: gha-argocd-${{ github.run_id }}
+          audience: sts.amazonaws.com
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.4
+
+      - name: Install Kustomize
+        uses: imranismail/setup-kustomize@v2
+        with:
+          kustomize-version: "5.4.3"
+
+      - name: Install Helm (for migration step + diagnostics)
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Write kubeconfig for EKS cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$KUBECONFIG")"
+          aws eks update-kubeconfig \
+            --region "${{ needs.config.outputs.aws_region }}" \
+            --name   "${{ needs.config.outputs.cluster_name }}" \
+            --kubeconfig "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          kubectl version --client=true
+          kubectl config current-context
+
+      # Rewrite the Argo CD version pin in argocd/install/kustomization.yaml
+      # in-place. Lets workflow_dispatch bump the version without a commit,
+      # while still keeping the default pin in the file for clarity.
+      - name: Pin Argo CD version
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="argocd/install/kustomization.yaml"
+          if ! grep -qE "argo-cd/v[0-9.]+/manifests/install.yaml" "$target"; then
+            echo "::error::expected an argo-cd version pin in $target — none found"
+            exit 1
+          fi
+          sed -i -E "s|argo-cd/v[0-9.]+/manifests/install.yaml|argo-cd/${ARGOCD_VERSION}/manifests/install.yaml|" "$target"
+          echo "Pinned to ${ARGOCD_VERSION}:"
+          grep -F "${ARGOCD_VERSION}" "$target"
+
+      # Dry-run path: render the kustomize output and stop. Lets reviewers
+      # see exactly what would land before approving the workflow_dispatch.
+      - name: Render install (dry run)
+        if: github.event.inputs.dry_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::argocd/install render"
+          kustomize build argocd/install
+          echo "::endgroup::"
+          echo "::group::argocd/bootstrap render"
+          kustomize build argocd/bootstrap
+          echo "::endgroup::"
+          echo "::notice::dry_run=true — nothing applied"
+
+      - name: Apply Argo CD install
+        if: github.event.inputs.dry_run != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --server-side: apply with field-ownership semantics so re-runs
+          # don't fight with the controllers over CRD-managed fields.
+          # --force-conflicts: take ownership of fields previously owned by
+          # the cluster-side admission process (CRD status, ingress class).
+          kustomize build argocd/install \
+            | kubectl apply --server-side --force-conflicts -f -
+
+      # Wait for the install to settle. Each Deployment/StatefulSet has its
+      # own rollout; we wait on each individually so the failing one is
+      # obvious from the log rather than a single timeout on the slowest.
+      - name: Wait for Argo CD to be ready
+        if: github.event.inputs.dry_run != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploys=(
+            argocd-server
+            argocd-repo-server
+            argocd-applicationset-controller
+            argocd-redis
+            argocd-dex-server
+            argocd-notifications-controller
+          )
+          for d in "${deploys[@]}"; do
+            echo "→ waiting for deploy/${d}"
+            kubectl -n "$ARGOCD_NAMESPACE" rollout status deploy/"$d" --timeout=5m \
+              || { echo "::error::deploy/${d} failed to roll out"; exit 1; }
+          done
+          # argocd-application-controller is a StatefulSet, not a Deployment.
+          kubectl -n "$ARGOCD_NAMESPACE" rollout status statefulset/argocd-application-controller --timeout=5m \
+            || { echo "::error::statefulset/argocd-application-controller failed to roll out"; exit 1; }
+
+      # OPTIONAL — migrates pre-existing helm releases out of the way so Argo
+      # CD can adopt the same namespaces without colliding on Helm 3 field
+      # ownership (`meta.helm.sh/release-name` etc.). Off by default; flip
+      # to true only on the first bootstrap. Removes ALL resources owned by
+      # the named release in each namespace.
+      - name: Migrate existing Helm releases
+        if: github.event.inputs.dry_run != 'true' && github.event.inputs.migrate_helm_releases == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ns in codeplex-dev codeplex-qa codeplex-staging codeplex-prod; do
+            # Helm 3 status check works even if the namespace doesn't exist (returns non-zero).
+            if helm status codeplex-ai -n "$ns" >/dev/null 2>&1; then
+              echo "::warning::uninstalling existing helm release codeplex-ai in $ns"
+              helm uninstall codeplex-ai -n "$ns" --wait --timeout 5m || true
+            else
+              echo "no helm release codeplex-ai in $ns (or namespace missing) — skipping"
+            fi
+          done
+
+      - name: Apply bootstrap (AppProject + Applications)
+        if: github.event.inputs.dry_run != 'true' && github.event.inputs.install_only != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Brief retry — CRDs registered in the install step occasionally
+          # take a moment to be queryable via the discovery API on a fresh
+          # cluster. ~30s total is plenty.
+          for attempt in 1 2 3 4 5; do
+            if kustomize build argocd/bootstrap | kubectl apply --server-side -f -; then
+              break
+            fi
+            echo "::warning::bootstrap apply attempt ${attempt} failed (likely CRD discovery lag); retrying in 6s"
+            sleep 6
+            if [[ "$attempt" == "5" ]]; then
+              echo "::error::bootstrap apply did not succeed after 5 attempts"
+              exit 1
+            fi
+          done
+
+          # Surface what was created.
+          echo "::group::AppProjects"
+          kubectl -n "$ARGOCD_NAMESPACE" get appproject -o wide || true
+          echo "::endgroup::"
+          echo "::group::Applications"
+          kubectl -n "$ARGOCD_NAMESPACE" get application -o wide || true
+          echo "::endgroup::"
+
+      # In-cluster smoke test: hit the API server's /healthz via Service DNS.
+      # Confirms Service routing + endpoint slices + pod readiness together.
+      - name: Smoke test argocd-server
+        if: github.event.inputs.dry_run != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n "$ARGOCD_NAMESPACE" run argocd-smoke-${GITHUB_RUN_ID:-$$} \
+            --image=curlimages/curl:8.10.1 \
+            --rm --restart=Never --quiet --attach=true \
+            --command -- curl --fail --silent --show-error --max-time 10 \
+              "http://argocd-server.${ARGOCD_NAMESPACE}.svc.cluster.local/healthz?full=true"
+          echo "::notice::argocd-server /healthz returned 2xx"
+
+      # Print everything an operator needs to log in. The initial admin
+      # password Secret only exists right after a fresh install — Argo CD
+      # deletes it once the admin password is rotated via the UI/CLI. The
+      # command to retrieve it is emitted so the value is never written to
+      # the GitHub run log (where it would be retained ~90 days).
+      - name: Print access details
+        if: github.event.inputs.dry_run != 'true'
+        shell: bash
+        env:
+          NAMESPACE: ${{ env.ARGOCD_NAMESPACE }}
+          REGION:    ${{ needs.config.outputs.aws_region }}
+          CLUSTER:   ${{ needs.config.outputs.cluster_name }}
+          INSTALL_ONLY: ${{ github.event.inputs.install_only }}
+        run: |
+          set -euo pipefail
+          lb_host=$(kubectl -n "$NAMESPACE" get ingress argocd-server \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          if [ -z "$lb_host" ]; then
+            lb_host=$(kubectl -n "$NAMESPACE" get ingress argocd-server \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          fi
+
+          has_initial_secret="no"
+          if kubectl -n "$NAMESPACE" get secret argocd-initial-admin-secret >/dev/null 2>&1; then
+            has_initial_secret="yes"
+          fi
+
+          {
+            echo "## Argo CD"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Version | \`${ARGOCD_VERSION}\` |"
+            echo "| Namespace | \`${NAMESPACE}\` |"
+            echo "| Cluster | \`${CLUSTER}\` (${REGION}) |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$lb_host" ]; then
+            {
+              echo "### Access (Ingress)"
+              echo ""
+              echo "Add to your hosts file (until DNS for argocd.codeplex.local is set):"
+              echo '```'
+              echo "${lb_host}  argocd.codeplex.local"
+              echo '```'
+              echo "Then: http://argocd.codeplex.local/"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Access (Ingress LB not provisioned yet — fall back to port-forward)"
+              echo ""
+              echo '```bash'
+              echo "aws eks update-kubeconfig --region ${REGION} --name ${CLUSTER}"
+              echo "kubectl -n ${NAMESPACE} port-forward svc/argocd-server 8080:80"
+              echo "# then browse http://localhost:8080"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo ""
+            echo "### Initial admin"
+            echo ""
+            echo "- Username: \`admin\`"
+            if [ "$has_initial_secret" == "yes" ]; then
+              echo "- Password (rotate on first login — argocd-initial-admin-secret is auto-deleted post-rotation):"
+              echo '  ```bash'
+              echo "  kubectl -n ${NAMESPACE} get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 --decode; echo"
+              echo '  ```'
+            else
+              echo "- argocd-initial-admin-secret is not present (already rotated or upgrade run)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$INSTALL_ONLY" != "true" ]; then
+            apps=$(kubectl -n "$NAMESPACE" get application -o custom-columns=NAME:.metadata.name,REVISION:.spec.source.targetRevision,SYNC:.status.sync.status,HEALTH:.status.health.status --no-headers 2>/dev/null || true)
+            {
+              echo ""
+              echo "### Applications"
+              if [ -n "$apps" ]; then
+                echo '```'
+                echo "NAME                     REVISION   SYNC       HEALTH"
+                echo "$apps"
+                echo '```'
+              else
+                echo "(none reported yet — controller may still be reconciling; check the UI in ~30s)"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # On any failure, dump describe + recent events so the CI log alone
+      # tells the story. Same pattern as the "Diagnose helm failure" step in
+      # deploy-eks.yml.
+      - name: Diagnose on failure
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          echo "::group::pods in argocd"
+          kubectl -n "$ARGOCD_NAMESPACE" get pods -o wide
+          echo "::endgroup::"
+
+          for p in $(kubectl -n "$ARGOCD_NAMESPACE" get pods -o name 2>/dev/null); do
+            echo "::group::describe ${p}"
+            kubectl -n "$ARGOCD_NAMESPACE" describe "$p" || true
+            echo "::endgroup::"
+            echo "::group::logs ${p} (last 80 lines)"
+            kubectl -n "$ARGOCD_NAMESPACE" logs "$p" --all-containers --tail=80 --timestamps || true
+            echo "::endgroup::"
+          done
+
+          echo "::group::recent events"
+          kubectl -n "$ARGOCD_NAMESPACE" get events \
+            --sort-by=.lastTimestamp \
+            --field-selector type!=Normal \
+            | tail -50 || true
+          echo "::endgroup::"
+
+      - name: Scrub kubeconfig
+        if: always()
+        shell: bash
+        run: rm -f "$KUBECONFIG" || true

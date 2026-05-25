@@ -1,0 +1,33 @@
+# Argo CD UI fronted by the cluster-wide nginx-ingress controller. The same
+# controller already serves codeplex-{dev,qa,staging,prod}.codeplex.local via
+# k8s/monitoring/ingress.yaml; argocd gets its own host header.
+#
+# When the AWS ELB block lifts, point this host at the shared NLB via Route 53.
+# Until then, port-forward bypasses the Ingress entirely.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  annotations:
+    # argocd-server runs with --insecure (see cmd-params-patch.yaml) so the
+    # backend protocol is plain HTTP. Don't ask nginx-ingress to upgrade to
+    # gRPC here — the UI traffic is HTTP/JSON; the CLI uses gRPC-Web (also
+    # HTTP-compatible). Native gRPC clients would need a separate Ingress
+    # with backend-protocol: GRPC.
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/ssl-passthrough: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: argocd.codeplex.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80

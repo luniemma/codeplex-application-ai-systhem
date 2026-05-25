@@ -1,0 +1,25 @@
+# Argo CD install — pinned upstream manifests + a small ConfigMap patch + the
+# nginx-ingress Ingress fronting the UI. The deploy workflow rewrites the
+# argo-cd version in the URL below from its `argocd_version` input so a bump
+# is a one-click workflow_dispatch rather than a commit to this file.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+
+resources:
+  - namespace.yaml
+  # Pinned upstream install. NEVER point this at master/HEAD — Argo CD is
+  # a control-plane component; surprise upgrades break GitOps for everyone.
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.1/manifests/install.yaml
+  - ingress.yaml
+
+# Tell argocd-server to serve plain HTTP. nginx-ingress in front terminates
+# TLS upstream (when configured); without --insecure, argocd-server runs its
+# self-signed TLS and the ingress would need a TLS-backend annotation plus a
+# redirect-loop dance to work. Cleaner to terminate at the edge.
+patches:
+  - path: cmd-params-patch.yaml
+    target:
+      kind: ConfigMap
+      name: argocd-cmd-params-cm

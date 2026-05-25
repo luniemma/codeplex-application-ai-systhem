@@ -1,0 +1,136 @@
+# Four Applications, one per environment, mirroring the promotion shape of
+# .github/workflows/deploy.yml:
+#   * dev      — automated sync from master (replaces the auto_dev path)
+#   * qa       — manual sync from master (matches workflow_dispatch + master)
+#   * staging  — manual sync from master (retarget to release/* when adopted)
+#   * prod     — manual sync from master (retarget to release/* + reviewer gate)
+#
+# `releaseName: codeplex-ai` keeps the resource names identical to what the
+# old helm pipeline produced. If you already have a `codeplex-ai` helm
+# release in any of these namespaces, run the bootstrap workflow with
+# `migrate_helm_releases: true` once to clear Helm 3 ownership labels
+# before Argo CD's first sync — otherwise the apply collides with
+# `meta.helm.sh/release-name` field ownership.
+
+# ─── dev ─────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: codeplex-ai-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: codeplex
+  source:
+    repoURL: https://github.com/luniemma/codeplex-application-ai-systhem
+    targetRevision: master
+    path: helm/codeplex-ai
+    helm:
+      releaseName: codeplex-ai
+      valueFiles:
+        - values.yaml
+        - ../envs/dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: codeplex-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+---
+# ─── qa ─────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: codeplex-ai-qa
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: codeplex
+  source:
+    repoURL: https://github.com/luniemma/codeplex-application-ai-systhem
+    targetRevision: master
+    path: helm/codeplex-ai
+    helm:
+      releaseName: codeplex-ai
+      valueFiles:
+        - values.yaml
+        - ../envs/qa.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: codeplex-qa
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+---
+# ─── staging ────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: codeplex-ai-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: codeplex
+  source:
+    repoURL: https://github.com/luniemma/codeplex-application-ai-systhem
+    # Retarget to a `release/N` branch once you adopt the release-branch
+    # promotion flow. Master is the safe default until then.
+    targetRevision: master
+    path: helm/codeplex-ai
+    helm:
+      releaseName: codeplex-ai
+      valueFiles:
+        - values.yaml
+        - ../envs/staging.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: codeplex-staging
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+---
+# ─── prod ───────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: codeplex-ai-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: codeplex
+  source:
+    repoURL: https://github.com/luniemma/codeplex-application-ai-systhem
+    # Same as staging — retarget to release/N once the release-branch flow
+    # is in use. Combine with Argo CD RBAC so only release managers can
+    # change this field via the UI/API.
+    targetRevision: master
+    path: helm/codeplex-ai
+    helm:
+      releaseName: codeplex-ai
+      valueFiles:
+        - values.yaml
+        - ../envs/prod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: codeplex-prod
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,40 @@
+# AppProject scopes what Applications in this project may pull and where
+# they may deploy. Tight by design — single repo, four namespaces, no cluster-
+# scoped resources (the chart only creates namespaced ones).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: codeplex
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: >-
+    Codeplex AI — single source repo, deployed to dev/qa/staging/prod
+    namespaces on the shared codeplex-eks cluster.
+
+  sourceRepos:
+    - https://github.com/luniemma/codeplex-application-ai-systhem
+    - https://github.com/luniemma/codeplex-application-ai-systhem.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: codeplex-dev
+    - server: https://kubernetes.default.svc
+      namespace: codeplex-qa
+    - server: https://kubernetes.default.svc
+      namespace: codeplex-staging
+    - server: https://kubernetes.default.svc
+      namespace: codeplex-prod
+
+  # Chart only creates namespaced resources; explicitly empty here so a
+  # rogue PR that adds e.g. a ClusterRole would fail validation.
+  clusterResourceWhitelist: []
+
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Default reactions to drift, before per-Application sync policy.
+  orphanedResources:
+    warn: true
