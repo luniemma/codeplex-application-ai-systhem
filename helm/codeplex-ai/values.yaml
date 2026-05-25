@@ -5,8 +5,13 @@
 replicaCount: 2
 
 image:
-  repository: luniemma/codeplex-ai
-  tag: ""                 # defaults to .Chart.AppVersion
+  # build-docker.yml publishes to docker.io/luniemma/codeplex.ai (period,
+  # not dash) and tags every push with both `latest` and `sha-<short>`.
+  # Chart default is `latest` so an Argo-CD sync (no --set overrides) just
+  # works; deploy.yml continues to pass --set image.tag=sha-<sha> for
+  # immutable pins on the helm path.
+  repository: luniemma/codeplex.ai
+  tag: "latest"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
