@@ -1081,7 +1081,7 @@ details.faq summary::after {
   content: "+"; color: var(--muted); font-size: 22px; line-height: 1;
   transition: transform 0.15s, color 0.15s; flex-shrink: 0;
 }
-details.faq[open] summary::after { content: "−"; color: var(--accent); }
+details.faq[open] summary::after { content: "\002212"; color: var(--accent); }
 details.faq summary:hover { color: var(--accent); }
 details.faq .answer { padding: 0 20px 18px; color: var(--muted); font-size: 14px; line-height: 1.65; }
 details.faq .answer code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
@@ -1117,7 +1117,7 @@ COMPARE_ROWS = [
     ("Context window", "128K tokens", "200K tokens", "1M tokens",
      "Largest wins on long-document workloads; Gemini's 1M context is the differentiator."),
     ("Price / 1M input tokens", "$2.50", "$3.00", "$0.15",
-     "Flash is ~20× cheaper than the others — ideal for high-volume classifiers."),
+     "Flash is ~20x cheaper than the others — ideal for high-volume classifiers."),
     ("Price / 1M output tokens", "$10.00", "$15.00", "$0.60",
      "Output is where bills explode for generation-heavy workloads."),
     ("Streaming", "✓ SSE", "✓ SSE", "✓ SSE",
