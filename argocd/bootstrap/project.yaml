@@ -27,9 +27,13 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: codeplex-prod
 
-  # Chart only creates namespaced resources; explicitly empty here so a
-  # rogue PR that adds e.g. a ClusterRole would fail validation.
-  clusterResourceWhitelist: []
+  # Chart itself only creates namespaced resources, but Applications use
+  # `CreateNamespace=true` to pre-create their destination namespace if
+  # missing. Namespace is cluster-scoped, so we must allow that one kind
+  # explicitly. Anything else (ClusterRole, CRD, etc.) is still rejected.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
 
   namespaceResourceWhitelist:
     - group: "*"
