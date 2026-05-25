@@ -276,11 +276,18 @@ jobs:
           # Server-side dry run shows what would actually change in-cluster.
           kubectl diff -f /tmp/rendered.yaml || true
 
-      # If a previous deploy hit the timeout mid-rollback, the release can
-      # be left in pending-install/pending-upgrade/pending-rollback. Helm's
-      # next `upgrade --install` then refuses with "another operation in
-      # progress." Detect that state and recover before retrying so a single
-      # bad deploy doesn't wedge the namespace.
+      # If a previous deploy left the namespace in a weird state, Helm's next
+      # `upgrade --install` may fail in confusing ways:
+      #   * pending-install / pending-upgrade / pending-rollback → "another
+      #     operation in progress"
+      #   * failed (from a previous --wait timeout without --atomic) → install
+      #     proceeds as upgrade but rollout is still broken; clearer to wipe
+      #     and start fresh.
+      #   * release record gone (atomic rollback succeeded) but resources
+      #     still present (rollback partially failed) → "exists, not owned"
+      #     errors mid-install.
+      # Detect each case and recover before retrying so a single bad deploy
+      # doesn't wedge the namespace.
       - name: Recover from stuck Helm release
         if: inputs.method == 'helm' && inputs.dry_run == false
         shell: bash
@@ -291,15 +298,45 @@ jobs:
           set -euo pipefail
           status=$(helm status "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.info.status' || true)
           case "${status:-}" in
-            pending-install|pending-upgrade|pending-rollback)
+            pending-install|pending-upgrade|pending-rollback|failed)
               echo "::warning::Release $RELEASE in '$status' — uninstalling before retry to clear the lock"
               helm uninstall "$RELEASE" -n "$NAMESPACE" --wait --timeout 5m || true ;;
             "")
-              echo "No existing release; first install." ;;
+              echo "No existing release record; checking for orphan resources from a previous failed install."
+              # When --atomic rolls back a failed first install, it CAN leave
+              # resources behind (e.g. apiserver 404s on a Service mid-delete).
+              # Helm's next install will then collide on those resources with
+              # "exists, not owned by release". Sweep by instance label so we
+              # only touch resources this chart would have created.
+              instance="$RELEASE"
+              orphans=$(kubectl -n "$NAMESPACE" get all,configmap,secret,ingress,hpa,pdb,servicemonitor,serviceaccount \
+                -l "app.kubernetes.io/instance=${instance}" \
+                -o name 2>/dev/null | head -100 || true)
+              if [[ -n "$orphans" ]]; then
+                echo "::warning::Found orphan resources from a previous failed install — cleaning before retry:"
+                echo "$orphans"
+                kubectl -n "$NAMESPACE" delete \
+                  all,configmap,secret,ingress,hpa,pdb,servicemonitor,serviceaccount \
+                  -l "app.kubernetes.io/instance=${instance}" \
+                  --ignore-not-found --wait=false --timeout=2m || true
+              else
+                echo "No orphan resources found; clean first install."
+              fi ;;
             *)
               echo "Existing release status: $status — proceeding with upgrade." ;;
           esac
 
+      # We deliberately do NOT pass --atomic on the install path. Atomic
+      # rollback on a FAILED FIRST INSTALL runs `helm uninstall` which:
+      #   1. wraps the real install error in an opaque "uninstalling the
+      #      release" message that hides the actionable diagnostic; and
+      #   2. wipes the resources so `kubectl describe` post-mortem returns
+      #      nothing.
+      # Without --atomic, a failed install leaves a `failed` release record
+      # and the resources in place. The "Recover from stuck Helm release"
+      # step on the next run catches that, and the "Diagnose helm failure"
+      # step below dumps describe/events/logs immediately on failure so the
+      # CI log itself shows what went wrong.
       - name: Helm upgrade --install
         if: inputs.method == 'helm' && inputs.dry_run == false
         id: helm-deploy
@@ -309,7 +346,6 @@ jobs:
           helm upgrade --install "${{ inputs.release_name }}" "${{ inputs.chart_path }}" \
             --namespace "${{ inputs.namespace }}" \
             --create-namespace \
-            --atomic \
             --wait \
             --timeout "${{ inputs.timeout }}" \
             ${{ steps.helm-flags.outputs.flags }} \
@@ -318,6 +354,51 @@ jobs:
             | jq -r '.[-1].revision')
           echo "revision=${revision}" >> "$GITHUB_OUTPUT"
           echo "::notice::Helm release ${{ inputs.release_name }} now at revision ${revision}"
+
+      # On helm failure, dump enough cluster state to debug from the CI log
+      # alone. Runs only when the previous step failed; uses `if: failure()`
+      # rather than `always()` so successful runs stay quiet.
+      - name: Diagnose helm failure
+        if: inputs.method == 'helm' && inputs.dry_run == false && failure() && steps.helm-deploy.conclusion == 'failure'
+        shell: bash
+        env:
+          RELEASE: ${{ inputs.release_name }}
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set +e
+          echo "::group::helm history"
+          helm history "$RELEASE" -n "$NAMESPACE" || true
+          echo "::endgroup::"
+
+          echo "::group::helm status"
+          helm status "$RELEASE" -n "$NAMESPACE" || true
+          echo "::endgroup::"
+
+          echo "::group::kubectl get all (-l instance=$RELEASE)"
+          kubectl -n "$NAMESPACE" get all,configmap,secret,ingress,hpa,pdb \
+            -l "app.kubernetes.io/instance=$RELEASE" -o wide || true
+          echo "::endgroup::"
+
+          # describe each pod with the release label — surfaces image pull
+          # failures, OOM kills, probe failures, scheduling issues, etc.
+          pods=$(kubectl -n "$NAMESPACE" get pods \
+            -l "app.kubernetes.io/instance=$RELEASE" \
+            -o name 2>/dev/null)
+          for p in $pods; do
+            echo "::group::describe $p"
+            kubectl -n "$NAMESPACE" describe "$p" || true
+            echo "::endgroup::"
+            echo "::group::logs $p (last 100 lines, all containers)"
+            kubectl -n "$NAMESPACE" logs "$p" --all-containers --tail=100 --timestamps || true
+            echo "::endgroup::"
+          done
+
+          echo "::group::recent namespace events"
+          kubectl -n "$NAMESPACE" get events \
+            --sort-by=.lastTimestamp \
+            --field-selector type!=Normal \
+            | tail -50 || true
+          echo "::endgroup::"
 
       # ----------------------------------------------------------------------
       # Kustomize path
