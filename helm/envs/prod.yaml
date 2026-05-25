@@ -52,8 +52,18 @@ secrets:
 redis:
   enabled: false
 
+# Disabled until kube-prometheus-stack lives on the platform layer
+# (existing roadmap item). Without the prometheus-operator CRDs in the
+# cluster, applying a ServiceMonitor fails with "no matches for kind".
+# The chart still emits the prometheus.io/scrape pod annotations, so the
+# static-config Prometheus in k8s/monitoring/ scrapes prod the same way
+# it scrapes dev/qa/staging.
 serviceMonitor:
-  enabled: true
+  enabled: false
 
+# Same reason — the Grafana sidecar that auto-imports ConfigMaps labelled
+# grafana_dashboard=1 ships with kube-prometheus-stack. The bundled
+# Grafana in k8s/monitoring/ has no sidecar, so a labelled ConfigMap
+# would just sit unread. Re-enable alongside ServiceMonitor.
 grafanaDashboard:
-  enabled: true
+  enabled: false
