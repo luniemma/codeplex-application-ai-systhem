@@ -147,6 +147,9 @@ _HEADER_HTML = r"""
   </div>
   <nav class="primary">
     <a href="/" class="{% if active == 'home' %}active{% endif %}">Playground</a>
+    <a href="/docs" class="{% if active == 'docs' %}active{% endif %}">Docs</a>
+    <a href="/compare" class="{% if active == 'compare' %}active{% endif %}">Compare</a>
+    <a href="/faq" class="{% if active == 'faq' %}active{% endif %}">FAQ</a>
     <a href="/about" class="{% if active == 'about' %}active{% endif %}">About</a>
     <a href="/stories" class="{% if active == 'stories' %}active{% endif %}">Stories</a>
     <a href="/roadmap" class="{% if active == 'roadmap' %}active{% endif %}">Roadmap</a>
@@ -680,3 +683,551 @@ def stories():
 @pages_bp.route("/roadmap")
 def roadmap():
     return _render("roadmap", _ROADMAP_BODY)
+
+
+# ─── /docs — multi-language quick-start ───────────────────────────────────
+# Each entry is (endpoint, description, samples_by_lang). Edit to add more
+# endpoints or new language tabs.
+_DOC_SAMPLES = [
+    (
+        "POST /api/analyze",
+        "Static analysis of a code snippet — surfaces smells, complexity hot-spots, and suggestions.",
+        {
+            "curl": (
+                "curl -X POST https://codeplex.ai/api/analyze \\\n"
+                "  -H 'Content-Type: application/json' \\\n"
+                "  -d '{\n"
+                "    \"code\": \"def add(a, b):\\n    return a + b\",\n"
+                "    \"provider\": \"openai\"\n"
+                "  }'"
+            ),
+            "python": (
+                "import requests\n\n"
+                "resp = requests.post(\n"
+                "    'https://codeplex.ai/api/analyze',\n"
+                "    json={\n"
+                "        'code': 'def add(a, b):\\n    return a + b',\n"
+                "        'provider': 'openai',\n"
+                "    },\n"
+                "    timeout=30,\n"
+                ")\n"
+                "resp.raise_for_status()\n"
+                "print(resp.json()['data']['analysis'])"
+            ),
+            "javascript": (
+                "const res = await fetch('https://codeplex.ai/api/analyze', {\n"
+                "  method: 'POST',\n"
+                "  headers: { 'Content-Type': 'application/json' },\n"
+                "  body: JSON.stringify({\n"
+                "    code: 'def add(a, b):\\n    return a + b',\n"
+                "    provider: 'openai',\n"
+                "  }),\n"
+                "});\n"
+                "const { data } = await res.json();\n"
+                "console.log(data.analysis);"
+            ),
+        },
+    ),
+    (
+        "POST /api/generate",
+        "Generate code from a natural-language prompt; response includes the generated source plus a short rationale.",
+        {
+            "curl": (
+                "curl -X POST https://codeplex.ai/api/generate \\\n"
+                "  -H 'Content-Type: application/json' \\\n"
+                "  -d '{\n"
+                "    \"prompt\": \"Write a Python LRU cache with size N.\",\n"
+                "    \"provider\": \"anthropic\"\n"
+                "  }'"
+            ),
+            "python": (
+                "import requests\n\n"
+                "resp = requests.post(\n"
+                "    'https://codeplex.ai/api/generate',\n"
+                "    json={\n"
+                "        'prompt': 'Write a Python LRU cache with size N.',\n"
+                "        'provider': 'anthropic',\n"
+                "    },\n"
+                ")\n"
+                "print(resp.json()['data']['generated_code'])"
+            ),
+            "javascript": (
+                "const res = await fetch('https://codeplex.ai/api/generate', {\n"
+                "  method: 'POST',\n"
+                "  headers: { 'Content-Type': 'application/json' },\n"
+                "  body: JSON.stringify({\n"
+                "    prompt: 'Write a Python LRU cache with size N.',\n"
+                "    provider: 'anthropic',\n"
+                "  }),\n"
+                "});\n"
+                "const { data } = await res.json();\n"
+                "console.log(data.generated_code);"
+            ),
+        },
+    ),
+    (
+        "POST /api/chat (streaming)",
+        "Multi-turn chat. Set <code>stream: true</code> to receive Server-Sent Events as tokens arrive.",
+        {
+            "curl": (
+                "curl -N -X POST https://codeplex.ai/api/chat/stream \\\n"
+                "  -H 'Content-Type: application/json' \\\n"
+                "  -d '{\n"
+                "    \"messages\": [\n"
+                "      {\"role\": \"user\", \"content\": \"Explain Python decorators briefly.\"}\n"
+                "    ],\n"
+                "    \"provider\": \"openai\"\n"
+                "  }'"
+            ),
+            "python": (
+                "import json, requests\n\n"
+                "with requests.post(\n"
+                "    'https://codeplex.ai/api/chat/stream',\n"
+                "    json={\n"
+                "        'messages': [{'role': 'user', 'content': 'Explain decorators.'}],\n"
+                "        'provider': 'openai',\n"
+                "    },\n"
+                "    stream=True,\n"
+                ") as r:\n"
+                "    for line in r.iter_lines():\n"
+                "        if line and line.startswith(b'data: '):\n"
+                "            payload = line[6:].decode()\n"
+                "            if payload == '[DONE]':\n"
+                "                break\n"
+                "            chunk = json.loads(payload).get('chunk', '')\n"
+                "            print(chunk, end='', flush=True)"
+            ),
+            "javascript": (
+                "const res = await fetch('https://codeplex.ai/api/chat/stream', {\n"
+                "  method: 'POST',\n"
+                "  headers: { 'Content-Type': 'application/json' },\n"
+                "  body: JSON.stringify({\n"
+                "    messages: [{ role: 'user', content: 'Explain decorators.' }],\n"
+                "    provider: 'openai',\n"
+                "  }),\n"
+                "});\n"
+                "const reader = res.body.getReader();\n"
+                "const dec = new TextDecoder();\n"
+                "let buf = '';\n"
+                "while (true) {\n"
+                "  const { done, value } = await reader.read();\n"
+                "  if (done) break;\n"
+                "  buf += dec.decode(value, { stream: true });\n"
+                "  for (const ev of buf.split('\\n\\n').slice(0, -1)) {\n"
+                "    const line = ev.trim();\n"
+                "    if (!line.startsWith('data:')) continue;\n"
+                "    const payload = line.slice(5).trim();\n"
+                "    if (payload === '[DONE]') return;\n"
+                "    const { chunk } = JSON.parse(payload);\n"
+                "    if (chunk) process.stdout.write(chunk);\n"
+                "  }\n"
+                "  buf = buf.split('\\n\\n').pop();\n"
+                "}"
+            ),
+        },
+    ),
+    (
+        "POST /api/batch-analyze",
+        "Analyse a list of snippets in one request. Partial success is supported — failed entries appear with an <code>error</code> field.",
+        {
+            "curl": (
+                "curl -X POST https://codeplex.ai/api/batch-analyze \\\n"
+                "  -H 'Content-Type: application/json' \\\n"
+                "  -d '{\n"
+                "    \"codes\": [\n"
+                "      \"def a(): pass\",\n"
+                "      \"def b(): return 1/0\"\n"
+                "    ],\n"
+                "    \"provider\": \"google\"\n"
+                "  }'"
+            ),
+            "python": (
+                "import requests\n\n"
+                "resp = requests.post(\n"
+                "    'https://codeplex.ai/api/batch-analyze',\n"
+                "    json={\n"
+                "        'codes': ['def a(): pass', 'def b(): return 1/0'],\n"
+                "        'provider': 'google',\n"
+                "    },\n"
+                "    timeout=120,\n"
+                ")\n"
+                "for i, item in enumerate(resp.json()['data']['results']):\n"
+                "    print(f'[{i}]', item.get('analysis') or item.get('error'))"
+            ),
+            "javascript": (
+                "const res = await fetch('https://codeplex.ai/api/batch-analyze', {\n"
+                "  method: 'POST',\n"
+                "  headers: { 'Content-Type': 'application/json' },\n"
+                "  body: JSON.stringify({\n"
+                "    codes: ['def a(): pass', 'def b(): return 1/0'],\n"
+                "    provider: 'google',\n"
+                "  }),\n"
+                "});\n"
+                "const { data } = await res.json();\n"
+                "data.results.forEach((r, i) =>\n"
+                "  console.log(`[${i}]`, r.analysis ?? r.error),\n"
+                ");"
+            ),
+        },
+    ),
+]
+
+_DOCS_CSS = r"""
+.lang-tabs { display: flex; gap: 2px; margin-top: 12px; }
+.lang-tabs .lang {
+  padding: 6px 14px; cursor: pointer; font-size: 13px; color: var(--muted);
+  border: 1px solid var(--border); border-bottom: none;
+  border-radius: 8px 8px 0 0; user-select: none; background: var(--panel-2);
+  transition: color 0.15s, background 0.15s;
+}
+.lang-tabs .lang:hover { color: var(--text); }
+.lang-tabs .lang.active { color: var(--text); background: var(--code-bg); border-color: var(--accent); }
+.lang-panel { display: none; border: 1px solid var(--border); border-radius: 0 10px 10px 10px;
+  background: var(--code-bg); padding: 0; overflow: hidden; }
+.lang-panel.active { display: block; }
+.lang-panel pre { margin: 0; padding: 16px; background: transparent; }
+.endpoint-tag {
+  display: inline-block; font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px; color: var(--accent); background: var(--panel-2);
+  border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px;
+}
+.toc {
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 28px;
+}
+.toc a {
+  font-size: 13px; padding: 6px 12px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--muted); text-decoration: none; transition: all 0.15s;
+}
+.toc a:hover { color: var(--text); border-color: var(--accent); }
+"""
+
+_DOCS_JS = r"""
+<script>
+  document.querySelectorAll('.docs-block').forEach(block => {
+    const langs = block.querySelectorAll('.lang');
+    const panels = block.querySelectorAll('.lang-panel');
+    langs.forEach(l => l.addEventListener('click', () => {
+      langs.forEach(x => x.classList.toggle('active', x === l));
+      panels.forEach(p => p.classList.toggle('active', p.dataset.lang === l.dataset.lang));
+    }));
+  });
+</script>
+"""
+
+
+def _docs_block(idx: int, endpoint: str, desc: str, samples: dict) -> str:
+    anchor = endpoint.replace(" ", "-").replace("/", "-").replace("(", "").replace(")", "").lower()
+    tabs = "".join(
+        f'<span class="lang {"active" if i == 0 else ""}" data-lang="{lang}">{lang}</span>'
+        for i, lang in enumerate(samples.keys())
+    )
+    panels = "".join(
+        f'<div class="lang-panel {"active" if i == 0 else ""}" data-lang="{lang}">'
+        f"<pre><code>{code.replace('<', '&lt;').replace('>', '&gt;')}</code></pre>"
+        "</div>"
+        for i, (lang, code) in enumerate(samples.items())
+    )
+    return (
+        f'<div class="card docs-block" id="{anchor}">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">'
+        f'<span class="endpoint-tag">{endpoint}</span></div>'
+        f"<p>{desc}</p>"
+        f'<div class="lang-tabs">{tabs}</div>'
+        f"{panels}"
+        "</div>"
+    )
+
+
+_DOCS_BODY = (
+    "<style>" + _DOCS_CSS + "</style>"
+    "<h1>Docs</h1>"
+    "<p class='lead'>Every endpoint is the same shape: <code>POST</code> a JSON body, "
+    "pick a <code>provider</code>, get a JSON response. Pick a language tab on each "
+    "block to copy a working snippet.</p>"
+    "<div class='toc'>"
+    + "".join(
+        f'<a href="#{ep.replace(" ", "-").replace("/", "-").replace("(", "").replace(")", "").lower()}">{ep}</a>'
+        for ep, _, _ in _DOC_SAMPLES
+    )
+    + "</div>"
+    "<div class='card'>"
+    "<h3>Common request shape</h3>"
+    "<p>Every endpoint accepts a JSON body and returns "
+    "<code>{ success, data, error?, request_id }</code>. The <code>provider</code> "
+    "field is optional — if omitted, the first configured provider wins. Pass "
+    "<code>X-Request-ID</code> to correlate client logs with the server's "
+    "request id (also echoed back in the response header).</p>"
+    "</div>"
+    + "".join(_docs_block(i, ep, desc, samples) for i, (ep, desc, samples) in enumerate(_DOC_SAMPLES))
+    + "<h2>Error handling</h2>"
+    "<div class='card'>"
+    "<p>All errors are JSON with a stable shape: <code>{ success: false, error: \"...\", code: \"...\", request_id }</code>. "
+    "Common codes:</p>"
+    "<ul class='feat'>"
+    "<li><code>400 invalid_request</code> — missing or malformed body</li>"
+    "<li><code>401 missing_key</code> — the requested provider has no key configured</li>"
+    "<li><code>429 rate_limited</code> — back off using the <code>Retry-After</code> header</li>"
+    "<li><code>502 upstream_error</code> — the provider returned non-2xx; retry with another <code>provider</code></li>"
+    "<li><code>504 timeout</code> — request exceeded the configured upper bound (see "
+    "<code>/status</code>)</li>"
+    "</ul></div>"
+    + _DOCS_JS
+)
+
+
+# ─── /faq ─────────────────────────────────────────────────────────────────
+FAQ = [
+    (
+        "Do I need accounts with all three providers?",
+        "No. Configure any one of <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, "
+        "or <code>GOOGLE_API_KEY</code> and the corresponding endpoints will work. "
+        "Requests that name an unconfigured provider get a <code>401 missing_key</code> error "
+        "rather than silently falling back, so you can see what's wired up.",
+    ),
+    (
+        "How do you handle authentication?",
+        "Server-side: provider keys live in environment variables and are never echoed in logs "
+        "(redaction is in <code>app/logging_setup.py</code>). Client-side: the public API is "
+        "currently open with a CORS allowlist and rate limits — a JWT layer is planned for "
+        "the 1.2 release (<a href='/roadmap' style='color:var(--accent)'>see roadmap</a>).",
+    ),
+    (
+        "What are the rate limits?",
+        "Default is 30 requests/minute per IP across <code>/api/*</code> — see the Flask-Limiter "
+        "config in <code>app/security.py</code>. Production tiers configure a higher per-key "
+        "limit via Redis-backed storage; without Redis the limiter falls back to in-process "
+        "(per-worker) counters.",
+    ),
+    (
+        "Does the API stream responses?",
+        "Yes — <code>POST /api/chat/stream</code> returns Server-Sent Events with one "
+        "<code>chunk</code> per event, terminated by <code>data: [DONE]</code>. The "
+        "playground's Chat tab uses it by default; toggle the 'Stream' checkbox to compare "
+        "with the buffered <code>/api/chat</code> endpoint.",
+    ),
+    (
+        "How is caching implemented?",
+        "Per-route Redis-backed cache, keyed by a SHA-256 of the request body. TTL is "
+        "<code>CACHE_TTL</code> seconds (default 3600). Caching is disabled for "
+        "<code>/api/chat</code> (conversations are stateful) and "
+        "<code>/api/batch-analyze</code> (partial-success makes cache keys leaky). Toggle the "
+        "global flag with <code>ENABLE_CACHING</code>.",
+    ),
+    (
+        "How do I switch providers per-request?",
+        "Set the <code>provider</code> field in the JSON body to <code>openai</code>, "
+        "<code>anthropic</code>, or <code>google</code>. Omitting it picks the first configured "
+        "provider in the order they appear in <code>/api/models</code>. The provider that "
+        "actually answered is echoed in <code>data.provider</code> in the response.",
+    ),
+    (
+        "Where do I see metrics?",
+        "<code>GET /metrics</code> exposes Prometheus format. The bundled monitoring overlay "
+        "(<code>k8s/monitoring/</code>) imports a Codeplex AI Grafana dashboard automatically: "
+        "request volume, latency histograms, top routes, and cache hit rate. "
+        "<a href='/architecture' style='color:var(--accent)'>Architecture page</a> has the cluster diagram.",
+    ),
+    (
+        "How do I deploy this to my own cluster?",
+        "<code>helm/codeplex-ai</code> is the chart; <code>helm upgrade --install</code> with a "
+        "values overlay per environment is the supported path. The repo's "
+        "<code>.github/workflows/deploy.yml</code> shows the full chain: OIDC → EKS auth → helm "
+        "upgrade → smoke test. Bring your own kubeconfig and image registry.",
+    ),
+    (
+        "What about cost?",
+        "Provider billing is per-token, paid directly to OpenAI/Anthropic/Google — Codeplex is "
+        "free software with no usage fees. The biggest cost lever is routing: cheap "
+        "classifiers (Gemini Flash) for routine work, expensive models (Claude Opus, GPT-4) for "
+        "long-form generation. <a href='/compare' style='color:var(--accent)'>Compare page</a> "
+        "lays out price per million tokens.",
+    ),
+    (
+        "Is there an SDK?",
+        "Not yet — the API is intentionally HTTP-first so any language with a JSON client works. "
+        "If you want typed bindings, the OpenAPI spec at <code>/api/openapi.json</code> can "
+        "generate them for ~30 languages via <code>openapi-generator</code>. A first-party "
+        "Python SDK is on the roadmap.",
+    ),
+    (
+        "How do I report bugs or request features?",
+        "Open an issue on GitHub: <a href='https://github.com/luniemma/codeplex-application-ai-systhem/issues' "
+        "style='color:var(--accent)'>github.com/luniemma/codeplex-application-ai-systhem</a>. "
+        "Include the <code>X-Request-ID</code> header value from a failing response — server "
+        "logs are correlated by that id.",
+    ),
+    (
+        "What's the license?",
+        "MIT. See <code>LICENSE</code> in the repo root. Provider SDK licenses are separate and "
+        "apply per the provider's terms.",
+    ),
+]
+
+_FAQ_CSS = r"""
+details.faq {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0; margin: 10px 0;
+  transition: border-color 0.15s;
+}
+details.faq[open] { border-color: var(--accent); }
+details.faq summary {
+  padding: 16px 20px; cursor: pointer; list-style: none;
+  font-weight: 600; color: var(--text); font-size: 15px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+details.faq summary::-webkit-details-marker { display: none; }
+details.faq summary::after {
+  content: "+"; color: var(--muted); font-size: 22px; line-height: 1;
+  transition: transform 0.15s, color 0.15s; flex-shrink: 0;
+}
+details.faq[open] summary::after { content: "−"; color: var(--accent); }
+details.faq summary:hover { color: var(--accent); }
+details.faq .answer { padding: 0 20px 18px; color: var(--muted); font-size: 14px; line-height: 1.65; }
+details.faq .answer code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+"""
+
+_FAQ_BODY = (
+    "<style>" + _FAQ_CSS + "</style>"
+    "<h1>Frequently asked</h1>"
+    "<p class='lead'>Quick answers to the questions teams ask before adopting "
+    "Codeplex. For anything not here, open an issue or check the "
+    "<a href='/docs' style='color:var(--accent)'>docs</a>.</p>"
+    + "".join(
+        f"<details class='faq'>"
+        f"<summary>{q}</summary>"
+        f"<div class='answer'>{a}</div>"
+        "</details>"
+        for q, a in FAQ
+    )
+)
+
+
+# ─── /compare — provider comparison ────────────────────────────────────────
+# Each row: (capability, openai, anthropic, google, note).
+# Pricing reflects mainstream public list price for the model in COMPARE_MODELS
+# at the time this was written; treat as a rough order-of-magnitude guide.
+COMPARE_MODELS = {
+    "openai": "GPT-4o",
+    "anthropic": "Claude Sonnet 4.5",
+    "google": "Gemini 2.5 Flash",
+}
+
+COMPARE_ROWS = [
+    ("Context window", "128K tokens", "200K tokens", "1M tokens",
+     "Largest wins on long-document workloads; Gemini's 1M context is the differentiator."),
+    ("Price / 1M input tokens", "$2.50", "$3.00", "$0.15",
+     "Flash is ~20× cheaper than the others — ideal for high-volume classifiers."),
+    ("Price / 1M output tokens", "$10.00", "$15.00", "$0.60",
+     "Output is where bills explode for generation-heavy workloads."),
+    ("Streaming", "✓ SSE", "✓ SSE", "✓ SSE",
+     "All three stream; the abstraction in <code>app/ai_services.py</code> hides the differences."),
+    ("Tool use / function calling", "✓ strict mode", "✓ via Messages API", "✓",
+     "OpenAI's strict-mode JSON gives the most predictable shape; Anthropic is most lenient."),
+    ("Vision input", "✓", "✓", "✓",
+     "All three accept image inputs in the same multimodal message; not yet exposed in the playground."),
+    ("Long-form quality", "Strong", "Best (subjectively)", "Good",
+     "Anecdotal pick for creative long-form drafts; benchmark on your own prompts."),
+    ("Code quality", "Strong", "Strong", "Good",
+     "OpenAI and Anthropic trade leadership on code benchmarks release-to-release."),
+    ("Cold-start latency p50", "~600ms", "~700ms", "~250ms",
+     "Flash is noticeably snappier; matters for interactive UIs."),
+    ("Free tier", "Limited", "Limited", "Generous (Flash)",
+     "Google has the most permissive free tier for prototyping."),
+    ("Region availability", "Global", "US/EU/APAC", "Global",
+     "Bedrock + Vertex give Anthropic and Google regional residency options."),
+    ("Best for", "General purpose", "Long, nuanced reasoning", "High-volume + cheap",
+     "These are starting heuristics, not hard rules. Test against your prompts."),
+]
+
+_COMPARE_CSS = r"""
+.compare-table { width: 100%; border-collapse: collapse; margin: 18px 0;
+  background: var(--panel); border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--border); }
+.compare-table th, .compare-table td { padding: 14px 16px; text-align: left;
+  border-bottom: 1px solid var(--border); font-size: 14px; }
+.compare-table th { background: var(--panel-2); color: var(--muted);
+  text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;
+  font-weight: 600; }
+.compare-table tr:last-child td { border-bottom: none; }
+.compare-table td.cap { color: var(--text); font-weight: 600; min-width: 180px; }
+.compare-table td.cell { color: var(--text); font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px; }
+.compare-table td.note { color: var(--muted); font-size: 13px; max-width: 320px; font-style: italic; }
+.provider-header { display: flex; align-items: center; gap: 8px; }
+.provider-header .plogo {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: white; font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+.provider-header .plogo.openai    { background: #0db66e; }
+.provider-header .plogo.anthropic { background: #d97757; }
+.provider-header .plogo.google    { background: #4285f4; }
+.provider-header .pname { color: var(--text); font-size: 13px; font-weight: 600;
+  text-transform: none; letter-spacing: 0; }
+.provider-header .pmodel { color: var(--muted); font-size: 11px; font-family: ui-monospace, Consolas, monospace;
+  text-transform: none; letter-spacing: 0; margin-left: 4px; }
+"""
+
+_COMPARE_BODY = (
+    "<style>" + _COMPARE_CSS + "</style>"
+    "<h1>Compare providers</h1>"
+    "<p class='lead'>Side-by-side trade-offs between the three providers Codeplex "
+    "fronts. Pricing reflects public list at the time of writing — treat as a "
+    "rough order-of-magnitude. Always benchmark against your own prompts before "
+    "committing.</p>"
+    "<div style='overflow-x:auto'>"
+    "<table class='compare-table'>"
+    "<thead><tr>"
+    "<th style='min-width:180px'>Capability</th>"
+    "<th><div class='provider-header'><span class='plogo openai'>O</span>"
+    f"<span class='pname'>OpenAI</span><span class='pmodel'>{COMPARE_MODELS['openai']}</span></div></th>"
+    "<th><div class='provider-header'><span class='plogo anthropic'>A</span>"
+    f"<span class='pname'>Anthropic</span><span class='pmodel'>{COMPARE_MODELS['anthropic']}</span></div></th>"
+    "<th><div class='provider-header'><span class='plogo google'>G</span>"
+    f"<span class='pname'>Google</span><span class='pmodel'>{COMPARE_MODELS['google']}</span></div></th>"
+    "<th>Note</th>"
+    "</tr></thead><tbody>"
+    + "".join(
+        f"<tr><td class='cap'>{cap}</td>"
+        f"<td class='cell'>{o}</td>"
+        f"<td class='cell'>{a}</td>"
+        f"<td class='cell'>{g}</td>"
+        f"<td class='note'>{note}</td></tr>"
+        for cap, o, a, g, note in COMPARE_ROWS
+    )
+    + "</tbody></table></div>"
+    "<h2>Picking a default</h2>"
+    "<div class='grid-2'>"
+    "<div class='card'><h3>Cost-sensitive workloads</h3>"
+    "<p>Default to <strong>Gemini Flash</strong>. Reserve OpenAI or Anthropic for "
+    "the long tail of prompts that the cheaper model gets wrong. The Grafana "
+    "dashboard's <em>Top routes</em> panel makes this audit easy.</p></div>"
+    "<div class='card'><h3>Latency-sensitive UIs</h3>"
+    "<p><strong>Gemini Flash</strong> for snappy first-tokens; "
+    "<strong>OpenAI streaming</strong> as a fallback. Avoid Claude Opus for "
+    "interactive UIs — it's tuned for thoughtful output, not perceived speed.</p></div>"
+    "<div class='card'><h3>Long-document reasoning</h3>"
+    "<p><strong>Gemini 2.5 Pro</strong> (1M context) for retrieval-augmented or "
+    "whole-codebase prompts. <strong>Claude Sonnet 4.5</strong> (200K) when "
+    "quality of synthesis matters more than raw context size.</p></div>"
+    "<div class='card'><h3>Strict structured output</h3>"
+    "<p><strong>OpenAI</strong> strict-mode JSON. The other two are improving "
+    "but OpenAI still has the most reliable schema adherence in production.</p></div>"
+    "</div>"
+)
+
+
+@pages_bp.route("/docs")
+def docs():
+    return _render("docs", _DOCS_BODY)
+
+
+@pages_bp.route("/faq")
+def faq():
+    return _render("faq", _FAQ_BODY)
+
+
+@pages_bp.route("/compare")
+def compare():
+    return _render("compare", _COMPARE_BODY)

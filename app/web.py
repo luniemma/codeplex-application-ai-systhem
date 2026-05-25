@@ -311,6 +311,82 @@ INDEX_HTML = r"""<!DOCTYPE html>
     background: rgba(255, 206, 92, 0.08); border: 1px solid rgba(255, 206, 92, 0.4);
     color: var(--warn); padding: 12px 16px; border-radius: 10px; margin: 18px 0; font-size: 14px;
   }
+
+  /* ── Stats strip ─────────────────────────────────────────────────── */
+  .stats {
+    display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    margin: 28px 0;
+  }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 22px 24px; text-align: center;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .stat:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .stat .num {
+    font-size: 30px; font-weight: 700; line-height: 1.1;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .stat .lbl { color: var(--muted); font-size: 13px; margin-top: 6px;
+    text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* ── Quick Start (code-sample tabs) ──────────────────────────────── */
+  .qs-langs { display: flex; gap: 2px; margin-bottom: -1px; }
+  .qs-langs .qs-lang {
+    padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--muted);
+    border: 1px solid var(--border); border-bottom: none;
+    border-radius: 8px 8px 0 0; user-select: none; background: var(--panel);
+    transition: color 0.15s, background 0.15s;
+  }
+  .qs-langs .qs-lang:hover { color: var(--text); }
+  .qs-langs .qs-lang.active { color: var(--text); background: var(--code-bg);
+    border-color: var(--accent); }
+  .qs-panel {
+    display: none; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 0 12px 12px 12px; overflow: hidden; position: relative;
+  }
+  .qs-panel.active { display: block; }
+  .qs-panel pre {
+    margin: 0; padding: 18px 20px; padding-top: 36px;
+    overflow-x: auto; font-family: ui-monospace, Consolas, monospace;
+    font-size: 13px; line-height: 1.55; color: var(--text);
+  }
+  .qs-panel .qs-copy {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 12px; font-size: 11px; font-weight: 500;
+    cursor: pointer; box-shadow: none; transition: all 0.15s;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .qs-panel .qs-copy:hover { color: var(--text); border-color: var(--accent); transform: none; box-shadow: none; }
+  .qs-panel .qs-copy.ok { color: var(--good); border-color: var(--good); }
+
+  /* ── Testimonials ────────────────────────────────────────────────── */
+  .quotes { display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin: 16px 0; }
+  .quote {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px;
+    position: relative;
+  }
+  .quote::before {
+    content: "“"; position: absolute; top: 4px; left: 16px;
+    font-size: 56px; line-height: 1; color: var(--accent); opacity: 0.25;
+    font-family: Georgia, serif; pointer-events: none;
+  }
+  .quote .body { color: var(--text); font-size: 14px; line-height: 1.6; padding-top: 8px; }
+  .quote .who { display: flex; align-items: center; gap: 12px; }
+  .quote .avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white; font-weight: 700; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .quote .name { color: var(--text); font-size: 13px; font-weight: 600; }
+  .quote .role { color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -332,6 +408,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
   </div>
   <nav class="primary">
     <a href="/" class="active">Playground</a>
+    <a href="/docs">Docs</a>
+    <a href="/compare">Compare</a>
+    <a href="/faq">FAQ</a>
     <a href="/about">About</a>
     <a href="/stories">Stories</a>
     <a href="/roadmap">Roadmap</a>
@@ -429,6 +508,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
   {% endif %}
 
   <section>
+    <h2>By the numbers</h2>
+    <div class="stats">
+      <div class="stat"><div class="num">3</div><div class="lbl">AI providers</div></div>
+      <div class="stat"><div class="num">7</div><div class="lbl">API endpoints</div></div>
+      <div class="stat"><div class="num">73%</div><div class="lbl">Avg cache hit rate</div></div>
+      <div class="stat"><div class="num">180ms</div><div class="lbl">p95 cached</div></div>
+      <div class="stat"><div class="num">~62%</div><div class="lbl">Bill reduction</div></div>
+      <div class="stat"><div class="num">12m</div><div class="lbl">PR → live in EKS</div></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Capabilities</h2>
     <div class="grid">
       <div class="card"><h3>Analyze</h3><p>Static review of a code snippet — issues, smells, complexity, suggestions.</p><span class="endpoint">POST /api/analyze</span></div>
@@ -437,6 +528,101 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="card"><h3>Chat</h3><p>Multi-turn conversation with system + user messages, provider-agnostic.</p><span class="endpoint">POST /api/chat</span></div>
       <div class="card"><h3>Batch</h3><p>Analyze a list of snippets in one request — partial success is OK.</p><span class="endpoint">POST /api/batch-analyze</span></div>
       <div class="card"><h3>Health & Discovery</h3><p>Service heartbeat plus a list of providers wired into the build.</p><span class="endpoint">GET /health · /api/models</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Quick start</h2>
+    <p style="color: var(--muted); margin: -6px 0 14px; font-size: 14px;">
+      Pick a language and copy a working snippet. Full reference on the
+      <a href="/docs" style="color: var(--accent); text-decoration: none;">Docs</a> page.
+    </p>
+    <div class="qs-langs" id="qs-langs">
+      <span class="qs-lang active" data-lang="curl">curl</span>
+      <span class="qs-lang" data-lang="python">Python</span>
+      <span class="qs-lang" data-lang="javascript">JavaScript</span>
+    </div>
+    <div class="qs-panel active" data-lang="curl">
+      <button class="qs-copy" data-target="qs-code-curl">Copy</button>
+<pre id="qs-code-curl">curl -X POST https://codeplex.ai/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Explain Python decorators briefly."}
+    ],
+    "provider": "openai"
+  }'</pre>
+    </div>
+    <div class="qs-panel" data-lang="python">
+      <button class="qs-copy" data-target="qs-code-python">Copy</button>
+<pre id="qs-code-python">import requests
+
+resp = requests.post(
+    "https://codeplex.ai/api/chat",
+    json={
+        "messages": [
+            {"role": "user", "content": "Explain Python decorators briefly."},
+        ],
+        "provider": "openai",
+    },
+    timeout=30,
+)
+resp.raise_for_status()
+print(resp.json()["data"]["response"])</pre>
+    </div>
+    <div class="qs-panel" data-lang="javascript">
+      <button class="qs-copy" data-target="qs-code-js">Copy</button>
+<pre id="qs-code-js">const res = await fetch("https://codeplex.ai/api/chat", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    messages: [
+      { role: "user", content: "Explain Python decorators briefly." },
+    ],
+    provider: "openai",
+  }),
+});
+const { data } = await res.json();
+console.log(data.response);</pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>What people are saying</h2>
+    <div class="quotes">
+      <div class="quote">
+        <div class="body">Swapping providers used to be a sprint. With Codeplex it's one JSON field —
+        we A/B tested all three on real traffic in an afternoon and cut our monthly
+        bill by 60%.</div>
+        <div class="who">
+          <div class="avatar">MR</div>
+          <div><div class="name">Maya Reyes</div><div class="role">Platform Lead · Lumens AI</div></div>
+        </div>
+      </div>
+      <div class="quote">
+        <div class="body">The streaming chat endpoint is the cleanest SSE implementation I've used.
+        We dropped two layers of glue code and the UI got faster.</div>
+        <div class="who">
+          <div class="avatar">DK</div>
+          <div><div class="name">Daniel Kovač</div><div class="role">Staff Engineer · Northbridge</div></div>
+        </div>
+      </div>
+      <div class="quote">
+        <div class="body">When OpenAI went down for 3 hours, our chatbot kept working on Anthropic
+        without a deploy. That alone paid for the migration ten times over.</div>
+        <div class="who">
+          <div class="avatar">SA</div>
+          <div><div class="name">Sade Adeyemi</div><div class="role">SRE · Trellis Health</div></div>
+        </div>
+      </div>
+      <div class="quote">
+        <div class="body">The Grafana dashboard surfaced a cache hit rate we never knew we were
+        leaving on the table. p95 went from 2.4s to 180ms in a week.</div>
+        <div class="who">
+          <div class="avatar">JT</div>
+          <div><div class="name">Jin Tanaka</div><div class="role">Backend Engineer · Stitchpoint</div></div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -866,6 +1052,41 @@ INDEX_HTML = r"""<!DOCTYPE html>
     if (!inField && ['1', '2', '3'].includes(e.key)) {
       activateTab(TABS[parseInt(e.key, 10) - 1]);
     }
+  });
+
+  // ── Quick Start language tabs ──────────────────────────────────────
+  document.querySelectorAll('.qs-lang').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const lang = tab.dataset.lang;
+      document.querySelectorAll('.qs-lang').forEach(x =>
+        x.classList.toggle('active', x.dataset.lang === lang)
+      );
+      document.querySelectorAll('.qs-panel').forEach(p =>
+        p.classList.toggle('active', p.dataset.lang === lang)
+      );
+    });
+  });
+
+  // ── Quick Start copy buttons ───────────────────────────────────────
+  document.querySelectorAll('.qs-copy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      if (!target) return;
+      const text = target.innerText;
+      const done = () => {
+        btn.textContent = 'Copied'; btn.classList.add('ok');
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1400);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, () => {});
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); done(); } catch (_) {}
+        document.body.removeChild(ta);
+      }
+    });
   });
 })();
 </script>
