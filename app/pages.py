@@ -592,6 +592,21 @@ ROADMAP = [
         "Server-rendered info pages with a shared theme, visible in the top nav.",
     ),
     (
+        "Docs / Compare / FAQ pages + homepage expansion",
+        "done",
+        "Multi-language quick-start (curl/Python/JS), provider comparison table, FAQ accordion, plus stats / quick-start / testimonials sections on the playground homepage.",
+    ),
+    (
+        "Argo CD GitOps pipeline (install + bootstrap)",
+        "done",
+        "`.github/workflows/deploy-argocd.yml` installs Argo CD v2.13.1 from pinned upstream manifests and applies an AppProject + four Applications (one per env). Dev auto-syncs from master; qa/staging/prod sync manually. Sits alongside the existing helm-path deploy.yml.",
+    ),
+    (
+        "Drop --atomic + post-failure diagnostics on deploy",
+        "done",
+        "`helm upgrade --install` no longer uses --atomic so failed installs leave the release in `failed` state with resources in place. New 'Diagnose helm failure' step dumps describe / logs / events on failure; stuck-release recovery extended to handle `failed` and to label-sweep orphans.",
+    ),
+    (
         "AWS Support: enable Elastic Load Balancer creation",
         "in_progress",
         "Without it, the shared Ingress can't get a public NLB — workflow falls back to port-forward URLs in the run summary. Filed via support@aws.",
@@ -609,7 +624,17 @@ ROADMAP = [
     (
         "Move kube-prometheus-stack to platform layer",
         "planned",
-        "Replace the per-namespace bundled Prometheus with one cluster-wide kube-prometheus-stack install. App emits ServiceMonitor + dashboard ConfigMap (already wired).",
+        "Replace the per-namespace bundled Prometheus with one cluster-wide kube-prometheus-stack install. The chart's ServiceMonitor + grafana_dashboard ConfigMap are already wired (currently disabled in helm/envs/prod.yaml since the CRDs aren't present); flip both to true once kube-prometheus-stack lands.",
+    ),
+    (
+        "Argo CD Image Updater for staging/prod tag bumps",
+        "planned",
+        "Currently the Argo-managed Apps use `image.tag: latest` (chart default). For immutable prod deploys, install argocd-image-updater and annotate the staging/prod Applications to bump `image.tag` per registry push, then commit the new value back to git.",
+    ),
+    (
+        "Retire deploy.yml in favour of Argo CD",
+        "planned",
+        "Once Argo Image Updater is wired and staging/prod targetRevision points at release/* branches, the helm-path deploy.yml becomes redundant. Keep it through one full release cycle of dual-running to validate the GitOps path end-to-end.",
     ),
     (
         "Cloudflare Tunnel as a fallback exposure path",

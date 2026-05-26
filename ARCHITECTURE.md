@@ -271,6 +271,92 @@ graph TB
     class OpenAIApi,AnthropicApi,GoogleApi external
 ```
 
+### 6. Cluster topology — *how does it run on EKS?*
+
+A single shared `codeplex-eks` cluster hosts four environments as namespaces (dev / qa / staging / prod). Two parallel deploy paths land on the same cluster:
+
+- **Helm path** — `.github/workflows/deploy.yml` (auto on master push for dev; manual via workflow_dispatch for higher envs). Direct `helm upgrade --install`, gated by GitHub Environments. Sets `image.tag=sha-<commit>` per release.
+- **GitOps path** — Argo CD running in the `argocd` namespace reconciles four `Application` objects pointing at `helm/codeplex-ai` + the per-env `helm/envs/<env>.yaml` overlay. Dev auto-syncs from master; qa/staging/prod sync manually via the Argo UI. Bootstrapped by `.github/workflows/deploy-argocd.yml`.
+
+Both produce the same set of namespaced resources from the same Helm chart — they're alternative drivers, not different shapes. Pick whichever fits the workflow; don't run both against the same release simultaneously.
+
+```mermaid
+graph TB
+    subgraph CICD["GitHub Actions"]
+        Docker["Docker workflow<br/>build → smoke → scan → push"]
+        DeployHelm["deploy.yml<br/>(workflow_run)"]
+        DeployArgo["deploy-argocd.yml<br/>(workflow_dispatch / argocd/** push)"]
+    end
+
+    subgraph EKS["EKS cluster: codeplex-eks (us-east-1)"]
+        subgraph ArgoNS["namespace: argocd"]
+            ArgoServer["argocd-server"]
+            ArgoCtrl["argocd-application-controller<br/>(reconciles git → cluster)"]
+        end
+
+        subgraph DevNS["namespace: codeplex-dev"]
+            DevApp["Deployment: codeplex-ai"]
+            DevRedis["Deployment: codeplex-ai-redis"]
+            DevSvc["Service: codeplex-ai (ClusterIP)"]
+        end
+
+        subgraph QaNS["namespace: codeplex-qa"]
+            QaApp["Deployment: codeplex-ai"]
+        end
+
+        subgraph StagingNS["namespace: codeplex-staging"]
+            StagingApp["Deployment: codeplex-ai"]
+        end
+
+        subgraph ProdNS["namespace: codeplex-prod"]
+            ProdApp["Deployment: codeplex-ai<br/>(3 replicas, no bundled Redis)"]
+        end
+
+        subgraph SharedNS["namespace: nginx-ingress (cluster-wide)"]
+            NGINX["nginx-ingress controller<br/>(serves all namespaces)"]
+        end
+
+        subgraph MonitoringNS["namespaces: codeplex-* (each)"]
+            Prom["Prometheus<br/>(static-config scrape)"]
+            Graf["Grafana<br/>(Codeplex AI dashboard)"]
+        end
+    end
+
+    DockerHub[("🐳 Docker Hub<br/>luniemma/codeplex.ai<br/>:latest · :sha-&lt;short&gt;")]
+    GitHub[("📦 GitHub repo<br/>codeplex-application-<br/>ai-systhem")]
+
+    Docker -->|"push image"| DockerHub
+    Docker -.->|"workflow_run<br/>(success)"| DeployHelm
+
+    DeployHelm -->|"helm upgrade<br/>--set image.tag=sha-&lt;sha&gt;"| DevApp
+    DeployHelm -->|"OIDC + manual"| QaApp
+    DeployHelm -->|"OIDC + reviewer"| StagingApp
+    DeployHelm -->|"OIDC + reviewer"| ProdApp
+
+    DeployArgo -->|"kustomize apply<br/>install + bootstrap"| ArgoServer
+    ArgoCtrl -.->|"poll HEAD"| GitHub
+    ArgoCtrl -->|"auto-sync"| DevApp
+    ArgoCtrl -.->|"manual sync"| QaApp
+    ArgoCtrl -.->|"manual sync"| StagingApp
+    ArgoCtrl -.->|"manual sync"| ProdApp
+
+    DevApp -.->|"pull"| DockerHub
+    QaApp  -.->|"pull"| DockerHub
+    StagingApp -.->|"pull"| DockerHub
+    ProdApp -.->|"pull"| DockerHub
+
+    NGINX -.->|"per-namespace host<br/>codeplex-&lt;env&gt;.codeplex.local"| DevSvc
+
+    classDef cicd fill:#1b2440,stroke:#6b8cff,color:#fff
+    classDef ns fill:#13352b,stroke:#3ddc97,color:#fff
+    classDef registry fill:#3a2a1a,stroke:#ffce5c,color:#fff
+    class Docker,DeployHelm,DeployArgo cicd
+    class DevApp,DevRedis,DevSvc,QaApp,StagingApp,ProdApp,ArgoServer,ArgoCtrl,NGINX,Prom,Graf ns
+    class DockerHub,GitHub registry
+```
+
+**Why two parallel paths?** The Helm pipeline came first; the Argo CD path was added to trial GitOps reconciliation without ripping out the working CI deploys. In time, the Helm path is expected to be retired in favour of Argo CD + Argo CD Image Updater for tag bumps. Until then, the chart's `image.repository` / `image.tag` defaults must match what `build-docker.yml` actually publishes (`luniemma/codeplex.ai:latest`) so an Argo-CD sync without `--set` overrides produces a runnable Pod.
+
 ---
 
 ## Layers

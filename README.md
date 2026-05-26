@@ -29,10 +29,12 @@ Pick any provider per request via a `provider` field; the service abstracts away
 
 - **Three providers, one API** — OpenAI, Anthropic, and Google Gemini, selected via a `provider` field on each request
 - **Web playground** at `/` with three interactive tabs (Chat / Analyze / Generate), provider switcher, live status pills showing which keys are configured, and **proper markdown rendering** of model output (headings, lists, code blocks, tables) plus a *Show raw JSON* toggle
+- **Companion info pages** — `/docs` (multi-language quick-start in curl / Python / JS for every endpoint), `/compare` (OpenAI vs Anthropic vs Google side-by-side: context, price, latency, strengths), `/faq` (auth, rate limits, streaming, caching, deploy, cost), plus the existing `/about`, `/stories`, `/roadmap`, `/architecture`, `/status`
 - **Standardized response envelope** — every endpoint returns `{ timestamp, status_code, data }` for consistent client parsing
 - **Helpful errors** — missing keys, deprecated models, and upstream failures surface the actual cause; placeholder keys (`your_*_key_here`) are detected and rejected before any upstream call
 - **Optional Redis cache** — falls back silently to in-memory cache if Redis is unreachable, so local dev never requires Redis
 - **SQLite default** for the database — no setup required to get started; swap to PostgreSQL via `DATABASE_URL` for production
+- **Production-ready k8s deploy** — Helm chart (`helm/codeplex-ai/`) with per-env values overlays (dev/qa/staging/prod), plus an Argo CD GitOps pipeline (`argocd/` + `deploy-argocd.yml`) that bootstraps Argo CD and four `Application` objects in one workflow_dispatch run. See [DEPLOYMENT.md](DEPLOYMENT.md) for both paths.
 - **Docker-ready** — Dockerfile and docker-compose included
 - **CORS configured** for `/api/*` endpoints
 - **Unit-tested** — 13 tests covering every endpoint with mocked AI providers

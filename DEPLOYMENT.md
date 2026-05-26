@@ -1,5 +1,90 @@
 # Codeplex AI - Deployment Guide
 
+## How this project actually deploys
+
+The generic Docker-Compose / cloud sections below are reference material. The real deploy targets a single shared EKS cluster (`codeplex-eks`) with four namespaces (dev / qa / staging / prod). Two pipelines drive the same Helm chart against that cluster — pick one per release, don't run both at once.
+
+### Path A — Helm pipeline (`deploy.yml`)
+
+The original CI deploy. `git push origin master` builds + scans + publishes a Docker image (`docker.yml`), then a `workflow_run` trigger fires `deploy.yml` → `deploy-eks.yml` which:
+
+1. Assumes the `AWS_DEPLOY_ROLE_ARN` IAM role via OIDC.
+2. `aws eks update-kubeconfig` for `codeplex-eks`.
+3. **Recover from stuck Helm release** — if the previous release is `pending-*`, `failed`, or the release record is gone but k8s resources tagged `app.kubernetes.io/instance=codeplex-ai` remain, label-sweep + uninstall before retry.
+4. `helm upgrade --install` with `--wait --timeout 10m`, passing `--set image.tag=sha-<short>`. **Note:** `--atomic` is intentionally NOT set — a failed install now leaves a `failed` release record + resources in place so the next-step "Diagnose helm failure" can dump describe / logs / events. The recovery step on the next run cleans the failed state.
+5. Apply `k8s/monitoring/` (Prometheus + Grafana + shared Ingress with per-namespace host).
+6. `kubectl rollout status` + in-cluster HTTP smoke test against app / prom / grafana.
+7. Print public URLs (or `kubectl port-forward` commands if no NLB is provisioned).
+
+Promotion shape:
+- master push → auto-deploy to dev.
+- release/* push → auto-deploy to staging.
+- qa / prod → `workflow_dispatch` with GitHub Environment reviewers + soft policy (qa only from master, prod only from release/*).
+
+### Path B — Argo CD GitOps (`deploy-argocd.yml` + `argocd/`)
+
+A `workflow_dispatch` pipeline that takes the cluster from "no GitOps" to "Argo CD installed + four Applications under management" in one run:
+
+1. AWS OIDC + kubeconfig same as Path A.
+2. Kustomize-build `argocd/install/` (upstream `argo-cd v2.13.1` install.yaml + `argocd-cmd-params-cm` patched for `server.insecure: true` + nginx Ingress on `argocd.codeplex.local`).
+3. `kubectl rollout status` on every argocd workload (server, repo-server, applicationset-controller, redis, dex, notifications, application-controller).
+4. **Optional** `migrate_helm_releases: true` input — `helm uninstall codeplex-ai` in each codeplex-* namespace so Argo CD can take over cleanly without colliding on `meta.helm.sh/release-name` field ownership. Only flip on first bootstrap.
+5. Kustomize-build `argocd/bootstrap/` — applies AppProject `codeplex` + 4 Applications.
+6. Smoke test `/healthz` on argocd-server.
+7. Print initial admin password retrieval command + port-forward command (no plaintext password in CI logs).
+
+Sync policy in `argocd/bootstrap/applications.yaml`:
+- **dev** — `automated.prune + automated.selfHeal`; reconciles continuously against `master`.
+- **qa / staging / prod** — manual sync only. `targetRevision: master` is the safe default; retarget staging/prod to `release/N` branches when you adopt the release-branch flow, paired with Argo CD RBAC so only release managers can edit those fields.
+
+The AppProject `codeplex` whitelists the single source repo and the four destination namespaces. At cluster scope only `Namespace` is allowed (needed for `CreateNamespace=true`); anything else (ClusterRole, CRD) is rejected.
+
+### Picking between A and B
+
+| | Path A — Helm CI | Path B — Argo CD |
+|---|---|---|
+| Trigger | `git push` (auto for dev/staging) | Argo controller polls master every ~3min; manual sync for non-dev |
+| Image tag strategy | Per-commit `sha-<short>` injected via `--set` | Chart default `latest` (or pin per env later) |
+| Rollback | `helm rollback codeplex-ai N` | Argo UI → History → Rollback |
+| Drift detection | None — last apply wins | Continuous reconciliation; `selfHeal` reverts drift on dev |
+| Reviewer gating | GitHub Environments | Argo CD RBAC |
+| When to use | Per-PR deploys with full CI integration | Long-running release with continuous reconciliation |
+
+### Prerequisites for either path
+
+- `AWS_DEPLOY_ROLE_ARN` repo secret — provisioned by the `aws-terraform-infra` repo.
+- `codeplex-ai-real-secrets` Secret in each codeplex-* namespace (provider keys + `SECRET_KEY` + `JWT_SECRET`). Bootstrap once per namespace:
+  ```bash
+  kubectl -n codeplex-<env> create secret generic codeplex-ai-real-secrets \
+    --from-literal=OPENAI_API_KEY=sk-... \
+    --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
+    --from-literal=GOOGLE_API_KEY=AIza... \
+    --from-literal=SECRET_KEY="$(openssl rand -hex 32)" \
+    --from-literal=JWT_SECRET="$(openssl rand -hex 32)"
+  ```
+- The Docker workflow must have published the image being requested. The chart's default `image.repository: luniemma/codeplex.ai` and `image.tag: latest` match what `build-docker.yml` publishes; deploy.yml additionally pins to `sha-<short>` per release. `1.0.0` (Chart.AppVersion) is NOT a published tag — chart defaults were fixed to avoid the resulting `ImagePullBackOff`.
+
+### Browsing the running app
+
+When the cluster has an external NLB, browse `http://codeplex-<env>.codeplex.local/` (add the NLB hostname to your hosts file). When AWS hasn't provisioned the LB (current state), port-forward:
+
+```bash
+aws eks update-kubeconfig --region us-east-1 --name codeplex-eks
+kubectl -n codeplex-dev port-forward svc/codeplex-ai 8000:8000
+# browse http://localhost:8000
+```
+
+For Argo CD's own UI:
+
+```bash
+kubectl -n argocd port-forward svc/argocd-server 8080:80
+# browse http://localhost:8080 — username admin, retrieve password:
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 --decode; echo
+```
+
+---
+
 ## Pre-Deployment Checklist
 
 - [ ] All dependencies listed in `requirements.txt`
